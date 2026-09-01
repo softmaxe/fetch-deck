@@ -16,8 +16,9 @@ To release a version:
 3. Push a matching tag in complete `vMAJOR.MINOR.PATCH` form.
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+release_version=1.0.0
+git tag "v${release_version}"
+git push origin "v${release_version}"
 ```
 
 The workflow refuses tags that do not match the package version, existing

@@ -1,6 +1,6 @@
 [package]
 name = "fetchdeck"
-version = "0.1.2"
+version = "1.0.0"
 edition = "2024"
 description = "A friendly terminal interface for yt-dlp"
 license = "MIT"
