@@ -175,22 +175,19 @@ jobs:
           class Fetchdeck < Formula
             desc "Friendly terminal interface for yt-dlp"
             homepage "https://github.com/softmaxe/FetchDeck"
-            version "@VERSION@"
             license "@LICENSE@"
 
-            on_arm do
+            depends_on "ffmpeg"
+            depends_on :macos
+            depends_on "yt-dlp"
+
+            if Hardware::CPU.arm?
               url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@ARM_ARCHIVE@"
               sha256 "@ARM_SHA@"
-            end
-
-            on_intel do
+            else
               url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@INTEL_ARCHIVE@"
               sha256 "@INTEL_SHA@"
             end
-
-            depends_on :macos
-            depends_on "yt-dlp"
-            depends_on "ffmpeg"
 
             def install
               bin.install "fetchdeck"
