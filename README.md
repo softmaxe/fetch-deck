@@ -1,93 +1,133 @@
 <p align="center">
-  <a href="README.md"><kbd>English</kbd></a>
-  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
+  <img src="docs/assets/logo.png" width="176" alt="FetchDeck logo">
 </p>
 
 <h1 align="center">FetchDeck</h1>
 
-FetchDeck is a terminal interface for common `yt-dlp` downloads on macOS. It handles one URL at a time and walks through a fixed workflow:
+<p align="center">A focused macOS terminal interface for everyday <code>yt-dlp</code> downloads.</p>
 
-`Source` → `Probe` → `Options` → `Review` → `Progress` → `Done`
+<p align="center">
+  <a href="README.md"><kbd>English</kbd></a>
+  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
+</p>
 
-`Probe` reads the title, formats, and manual subtitle tracks before the app presents the available choices. The interface stays focused on the usual download cases instead of exposing every `yt-dlp` argument.
+<p align="center">
+  <img src="docs/assets/demo.gif" width="960" alt="FetchDeck workflow demo">
+</p>
 
-## What it supports
+FetchDeck guides one video URL through a short workflow. Paste the URL, choose the output, review the generated job, and watch the transfer without memorizing `yt-dlp` flags.
 
-- One video URL per download. Playlist and channel URLs are rejected.
-- Video downloads remuxed to MP4.
-- Audio extraction as M4A.
-- One manual subtitle track converted to SRT or VTT. Embedded and automatically generated subtitles are not included.
-- Quality choices derived from the probed formats. `Best available`, `1080p`, `720p`, and `480p` appear when applicable. `4K` appears only when the source has a format at or above 2160p.
-- Cookies from local Chrome, Firefox, and Brave profiles.
-- One active download, with progress, speed, ETA, status, and a bounded raw log.
-- Cancellation and retry. Partial files remain available for `yt-dlp` to continue on retry.
-- Local settings and up to 100 recent history entries.
+## Features
 
-## Requirements
+- Download video and remux it to MP4.
+- Extract audio as M4A.
+- Download one manual subtitle track as SRT or VTT.
+- Pick from qualities detected in the source: Best available, 4K, 1080p, 720p, or 480p.
+- Read cookies from local Chrome, Firefox, or Brave profiles after confirmation.
+- Follow progress, speed, ETA, status, and a bounded raw log.
+- Cancel a transfer and retry it with partial files left in place for `yt-dlp`.
+- Keep local settings and the latest 100 history entries.
+
+FetchDeck accepts one video URL at a time. It rejects playlist and channel URLs.
+
+## Install with Homebrew
+
+```sh
+brew tap softmaxe/tap
+brew install fetchdeck
+```
+
+The formula installs `yt-dlp` and `ffmpeg` as dependencies.
+
+## Run from source
+
+Source builds require:
 
 - macOS
 - Stable Rust with `cargo` on `PATH`
 - `yt-dlp`
 - `ffmpeg`
 
-Install the runtime dependencies with Homebrew:
+Install the runtime tools with Homebrew:
 
 ```sh
 brew install yt-dlp ffmpeg
 ```
 
-## Run from source
-
 ```sh
+git clone https://github.com/softmaxe/FetchDeck.git
+cd FetchDeck
 cargo run
 ```
 
-The header shows the detected paths for `yt-dlp` and `ffmpeg`. You can override both paths in Settings.
-
-For a release build:
+For an optimized build:
 
 ```sh
 cargo build --release
 ./target/release/fetchdeck
 ```
 
+The header reports whether FetchDeck found `yt-dlp` and `ffmpeg`. You can override either executable in Settings.
+
+## Workflow
+
+| Step | What happens |
+| --- | --- |
+| Source | Paste a video URL and choose whether to use browser cookies. FetchDeck probes the title, formats, and manual subtitle tracks. |
+| Options | Choose Video, Audio, or Subtitles, then set quality, subtitle format, and output directory. |
+| Review | Check the source, selected format, metadata, and destination before running anything. |
+| Progress | Follow the transfer gauge, speed, ETA, status, and raw `yt-dlp` output. |
+| Done | Open the result in Finder, start another download, or retry a failed or cancelled job. |
+
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, Up / Down | Move through fields or scroll Review and the Progress log |
+| `j` / `k`, Up / Down | Move between fields or scroll Review and the Progress log |
 | Left / Right | Change the selected option |
 | Page Up / Page Down | Scroll Review or the Progress log by ten lines |
 | `Enter` | Continue, start a download, begin a new download, or edit a setting |
-| `Esc` | Go back, stop reading metadata, or close a panel |
+| `Esc` | Go back, stop the metadata probe, or close a panel |
 | `c` | Cancel the active download |
-| `n` | Begin a new download from Done |
+| `n` | Start a new download from Done |
 | `r` | Retry a failed or cancelled download from Done |
 | `o` | Open the output in Finder from Done |
 | `F1` / `F2` / `F3` | Open Help, History, or Settings |
-| `x` | Clear History while its panel is open. Downloaded files are untouched |
+| `x` | Clear History while its panel is open; downloaded files stay untouched |
 | `e` / `s` | Edit or save Settings while its panel is open |
-| `q` | Quit. An active download requires a second confirmation |
+| `q` | Quit; an active download requires a second confirmation |
 
-Mouse movement highlights clickable fields and actions. Click a text field to focus it, click a choice to advance it, and use the wheel to scroll Review or Progress.
+Mouse input also works. Click a field to focus it, click a choice to advance it, and use the wheel to scroll Review or Progress.
 
-## Browser cookies
+## Browser cookies and privacy
 
-The first browser-cookie selection asks for confirmation. On the first successful Probe for a browser and profile, the app asks the local `yt-dlp` executable to read that profile and export the cookies to a private temporary Netscape cookie jar. On macOS, the jar is created with owner-only permissions. Later probes, downloads, and retries for the same browser and profile reuse it during that app session.
+FetchDeck asks before reading browser cookies. On the first successful probe for a browser profile, the local `yt-dlp` executable exports its cookies to a private, temporary Netscape cookie jar. Later probes, downloads, and retries for the same profile reuse that jar until FetchDeck exits.
 
-The temporary directory and jar are removed when the app exits. The jar path and browser authentication details are scrubbed from displayed logs and errors. Config and history do not store the browser, profile, cookie jar, or generated command. The app sends no telemetry.
+The temporary directory and cookie jar are deleted on exit. Displayed logs and errors scrub the jar path and browser authentication details. Settings and history do not store the browser, profile, cookie jar, or generated command. FetchDeck sends no telemetry.
 
-Some browsers lock their cookie database while running. If Probe reports a cookie database access error, close the selected browser and retry.
+Some browsers lock their cookie database while running. If the probe cannot access it, close the selected browser and retry.
 
-## Settings and history
+## Local data
 
-Settings stores the output directory and optional paths to `yt-dlp` and `ffmpeg`. History stores the URL, title, result, output path, and timestamp for the latest 100 completed, failed, or cancelled downloads. Press `x` in History to clear these entries without deleting downloaded files.
+Settings contain the output directory and optional paths to `yt-dlp` and `ffmpeg`. History contains the URL, title, result, output path, and timestamp for up to 100 completed, failed, or cancelled jobs. Clearing History does not delete downloaded files.
 
-Both files live in the standard macOS application directories selected for `com.softmaxe.fetchdeck`.
+macOS stores both files in the standard application directories for `com.softmaxe.fetchdeck`.
+
+## Rebuild the demo
+
+The animation uses fixed, offline metadata and generic `/tmp/fetchdeck-demo-*` paths. It does not access a browser profile, a real video URL, or the current user's download directory.
+
+The tape matches the reference Ghostty profile: JetBrains Mono 16 and Catppuccin Mocha. VHS renders an opaque background, so Ghostty's blur and transparency are intentionally omitted.
+
+```sh
+brew install vhs
+cargo build --release
+vhs docs/demo/demo.tape
+```
 
 ## Limitations
 
-- No playlist or channel downloads
+- No playlists or channels
 - No site search or advanced `yt-dlp` arguments
 - No MP3 conversion
 - No embedded or automatically generated subtitles

@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+case " ${*} " in
+  *" --version "*)
+    printf '%s\n' '2026.01.01-demo'
+    exit 0
+    ;;
+  *" --dump-single-json "*)
+    sleep 1
+    cat <<'JSON'
+{"id":"demo","title":"FetchDeck Demo","duration":96,"thumbnail":"https://example.test/thumbnail.jpg","formats":[{"format_id":"480p","height":480},{"format_id":"720p","height":720},{"format_id":"1080p","height":1080}],"subtitles":{"en":[{"ext":"vtt","name":"English"}]}}
+JSON
+    exit 0
+    ;;
+esac
+
+sleep 1
+printf '%s\n' 'FETCHDECK_PROGRESS:1048576|8388608|NA|2097152|4|downloading'
+sleep 1
+printf '%s\n' 'FETCHDECK_PROGRESS:3145728|8388608|NA|2097152|3|downloading'
+sleep 1
+printf '%s\n' 'FETCHDECK_PROGRESS:6291456|8388608|NA|2097152|1|downloading'
+sleep 1
+printf '%s\n' 'FETCHDECK_PROGRESS:8388608|8388608|NA|2097152|0|finished'
+mkdir -p /tmp/fetchdeck-demo-home/Downloads
+: > '/tmp/fetchdeck-demo-home/Downloads/FetchDeck Demo [demo].mp4'
+printf '%s\n' 'FETCHDECK_OUTPUT:/tmp/fetchdeck-demo-home/Downloads/FetchDeck Demo [demo].mp4'
