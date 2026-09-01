@@ -285,8 +285,14 @@ jobs:
           set -euo pipefail
           current_version="0.0.0"
           if [[ -f homebrew-tap/Formula/fetchdeck.rb ]]; then
-            current_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' homebrew-tap/Formula/fetchdeck.rb | head -n 1)"
-            test -n "${current_version}"
+            current_version="$(sed -n \
+              -e 's/^  version "\([^"]*\)"/\1/p' \
+              -e 's#.*releases/download/v\([0-9][^/]*\)/.*#\1#p' \
+              homebrew-tap/Formula/fetchdeck.rb | head -n 1)"
+            if [[ -z "${current_version}" ]]; then
+              echo "Could not determine the current FetchDeck formula version." >&2
+              exit 1
+            fi
           fi
           newest="$(printf '%s\n%s\n' "${current_version}" "${VERSION}" | sort -V | tail -n 1)"
           if [[ "${newest}" != "${VERSION}" ]]; then
