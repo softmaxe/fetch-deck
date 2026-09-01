@@ -238,8 +238,14 @@ jobs:
             echo "Unexpected runner architecture." >&2
             exit 1
           fi
-          brew audit --strict Formula/fetchdeck.rb
-          brew install --formula Formula/fetchdeck.rb
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          brew tap-new softmaxe/release-test
+          test_tap="$(brew --repository softmaxe/release-test)"
+          install -m 0644 Formula/fetchdeck.rb "${test_tap}/Formula/fetchdeck.rb"
+          formula_ref="softmaxe/release-test/fetchdeck"
+          brew audit --strict "${formula_ref}"
+          brew install "${formula_ref}"
           binary="$(brew --prefix fetchdeck)/bin/fetchdeck"
           test -x "${binary}"
           lipo_archs="$(lipo -archs "${binary}")"
@@ -247,7 +253,7 @@ jobs:
             echo "Installed binary architectures '${lipo_archs}' do not include ${EXPECTED_LIPO_ARCH}." >&2
             exit 1
           fi
-          brew test fetchdeck
+          brew test "${formula_ref}"
 
   tap-sync:
     needs: [validate, formula-test]
