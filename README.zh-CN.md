@@ -124,4 +124,4 @@ Tape 使用 JetBrains Mono 16 和 Catppuccin Mocha。VHS 使用不透明背景�
 
 ## 许可证
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

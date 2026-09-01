@@ -124,4 +124,4 @@ The tape uses JetBrains Mono 16 and Catppuccin Mocha. VHS renders an opaque back
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

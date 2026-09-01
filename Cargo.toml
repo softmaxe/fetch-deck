@@ -1,9 +1,9 @@
 [package]
 name = "fetchdeck"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 description = "A friendly terminal interface for yt-dlp"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/softmaxe/fetch-deck"
 
 [dependencies]
