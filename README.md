@@ -3,9 +3,9 @@
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-<h1 align="center">yt-dlp-tui</h1>
+<h1 align="center">FetchDeck</h1>
 
-`yt-dlp-tui` is a terminal interface for common `yt-dlp` downloads on macOS. It handles one URL at a time and walks through a fixed workflow:
+FetchDeck is a terminal interface for common `yt-dlp` downloads on macOS. It handles one URL at a time and walks through a fixed workflow:
 
 `Source` → `Probe` → `Options` → `Review` → `Progress` → `Done`
 
@@ -48,7 +48,7 @@ For a release build:
 
 ```sh
 cargo build --release
-./target/release/yt-dlp-tui
+./target/release/fetchdeck
 ```
 
 ## Controls
@@ -83,7 +83,7 @@ Some browsers lock their cookie database while running. If Probe reports a cooki
 
 Settings stores the output directory and optional paths to `yt-dlp` and `ffmpeg`. History stores the URL, title, result, output path, and timestamp for the latest 100 completed, failed, or cancelled downloads. Press `x` in History to clear these entries without deleting downloaded files.
 
-Both files live in the standard macOS application directories selected for `com.softmaxe.yt-dlp-tui`.
+Both files live in the standard macOS application directories selected for `com.softmaxe.fetchdeck`.
 
 ## Limitations
 

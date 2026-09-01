@@ -1,5 +1,5 @@
 use anyhow::Result;
-use yt_dlp_tui::{app::App, terminal::TerminalSession};
+use fetchdeck::{app::App, terminal::TerminalSession};
 
 #[tokio::main]
 async fn main() -> Result<()> {

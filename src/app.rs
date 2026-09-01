@@ -71,7 +71,7 @@ struct SessionCookieJar {
 
 impl SessionCookieJar {
     fn new() -> Result<Self> {
-        let directory = tempfile::Builder::new().prefix("yt-dlp-tui-").tempdir()?;
+        let directory = tempfile::Builder::new().prefix("fetchdeck-").tempdir()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

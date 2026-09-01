@@ -3,9 +3,9 @@
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-<h1 align="center">yt-dlp-tui</h1>
+<h1 align="center">FetchDeck</h1>
 
-`yt-dlp-tui` 是一个用于 macOS 的 `yt-dlp` 终端界面。它每次处理一个 URL，并按照固定流程完成下载：
+FetchDeck 是一个用于 macOS 的 `yt-dlp` 终端界面。它每次处理一个 URL，并按照固定流程完成下载：
 
 `Source` → `Probe` → `Options` → `Review` → `Progress` → `Done`
 
@@ -48,7 +48,7 @@ cargo run
 
 ```sh
 cargo build --release
-./target/release/yt-dlp-tui
+./target/release/fetchdeck
 ```
 
 ## 操作方式
@@ -83,7 +83,7 @@ cargo build --release
 
 Settings 保存输出目录以及可选的 `yt-dlp`、`ffmpeg` 路径。History 保存最近 100 个已完成、失败或取消的下载，包括 URL、标题、结果、输出路径和时间戳。在 History 中按 `x` 会清空这些记录，不会删除已下载文件。
 
-两个文件都位于 macOS 为 `com.softmaxe.yt-dlp-tui` 分配的标准应用目录中。
+两个文件都位于 macOS 为 `com.softmaxe.fetchdeck` 分配的标准应用目录中。
 
 ## 当前限制
 

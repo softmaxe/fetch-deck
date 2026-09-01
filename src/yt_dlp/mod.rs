@@ -8,8 +8,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-pub const PROGRESS_PREFIX: &str = "YT_DLP_TUI_PROGRESS:";
-pub const OUTPUT_PREFIX: &str = "YT_DLP_TUI_OUTPUT:";
+pub const PROGRESS_PREFIX: &str = "FETCHDECK_PROGRESS:";
+pub const OUTPUT_PREFIX: &str = "FETCHDECK_OUTPUT:";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn progress_parser_treats_na_as_missing() {
         let progress =
-            parse_progress_line("YT_DLP_TUI_PROGRESS:12|NA|N/A|3.5||downloading").unwrap();
+            parse_progress_line("FETCHDECK_PROGRESS:12|NA|N/A|3.5||downloading").unwrap();
         assert_eq!(progress.downloaded_bytes, Some(12));
         assert_eq!(progress.total_bytes, None);
         assert_eq!(progress.estimated_total_bytes, None);
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn output_parser_only_accepts_marked_lines() {
         assert_eq!(
-            parse_output_line("YT_DLP_TUI_OUTPUT:/tmp/Title [abc].mp4"),
+            parse_output_line("FETCHDECK_OUTPUT:/tmp/Title [abc].mp4"),
             Some(PathBuf::from("/tmp/Title [abc].mp4"))
         );
         assert_eq!(parse_output_line("ordinary log line"), None);

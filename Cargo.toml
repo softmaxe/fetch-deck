@@ -1,10 +1,10 @@
 [package]
-name = "yt-dlp-tui"
+name = "fetchdeck"
 version = "0.1.0"
 edition = "2024"
 description = "A friendly terminal interface for yt-dlp"
 license = "MIT"
-repository = "https://github.com/softmaxe/yt-dlp-tui"
+repository = "https://github.com/softmaxe/FetchDeck"
 
 [dependencies]
 anyhow = "1.0.104"

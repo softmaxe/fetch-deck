@@ -395,7 +395,7 @@ fn compact_card(area: Rect, model: &UiModel) -> Rect {
 fn draw_header(frame: &mut Frame, area: Rect, model: &UiModel) {
     let line = Line::from(vec![
         Span::styled(
-            " YT-DLP TUI ",
+            " FetchDeck ",
             Style::default()
                 .fg(theme::HEADING)
                 .bg(theme::PANEL)

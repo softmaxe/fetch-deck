@@ -95,7 +95,7 @@ impl HistoryStore {
 }
 
 fn project_dirs() -> Result<ProjectDirs, StorageError> {
-    ProjectDirs::from("com", "softmaxe", "yt-dlp-tui")
+    ProjectDirs::from("com", "softmaxe", "fetchdeck")
         .ok_or(StorageError::ProjectDirectoriesUnavailable)
 }
 
