@@ -1,27 +1,36 @@
-# yt-dlp-tui
+<p align="center">
+  <a href="README.md"><kbd>English</kbd></a>
+  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
+</p>
 
-`yt-dlp-tui` is a macOS terminal interface for common `yt-dlp` downloads. It keeps the queue, format choices, progress, and errors visible without exposing the full command-line option set.
+<h1 align="center">yt-dlp-tui</h1>
 
-## First release scope
+`yt-dlp-tui` is a terminal interface for common `yt-dlp` downloads on macOS. It handles one URL at a time and walks through a fixed workflow:
 
-- Download one video URL per job. Playlist and channel downloads are rejected.
-- Probe metadata and formats before adding a job.
-- Download video as MP4, audio as M4A, or one subtitle track as SRT/VTT.
-- Offer `Best available`, `4K`, `1080p`, `720p`, and `480p` when the source provides them. The `4K` choice only appears for sources with a 2160p format.
-- Read cookies through local Chrome, Firefox, or Brave profiles.
-- Run one download at a time and keep later jobs queued.
-- Show progress, speed, ETA, processing stage, and bounded raw logs.
-- Cancel or retry a job. Partial files remain available to `yt-dlp` for a retry.
-- Save non-sensitive settings and recent history locally.
+`Source` → `Probe` → `Options` → `Review` → `Progress` → `Done`
+
+`Probe` reads the title, formats, and manual subtitle tracks before the app presents the available choices. The interface stays focused on the usual download cases instead of exposing every `yt-dlp` argument.
+
+## What it supports
+
+- One video URL per download. Playlist and channel URLs are rejected.
+- Video downloads remuxed to MP4.
+- Audio extraction as M4A.
+- One manual subtitle track converted to SRT or VTT. Embedded and automatically generated subtitles are not included.
+- Quality choices derived from the probed formats. `Best available`, `1080p`, `720p`, and `480p` appear when applicable. `4K` appears only when the source has a format at or above 2160p.
+- Cookies from local Chrome, Firefox, and Brave profiles.
+- One active download, with progress, speed, ETA, status, and a bounded raw log.
+- Cancellation and retry. Partial files remain available for `yt-dlp` to continue on retry.
+- Local settings and up to 100 recent history entries.
 
 ## Requirements
 
 - macOS
-- Rust stable with `cargo` on `PATH`
+- Stable Rust with `cargo` on `PATH`
 - `yt-dlp`
 - `ffmpeg`
 
-Homebrew can install the runtime dependencies:
+Install the runtime dependencies with Homebrew:
 
 ```sh
 brew install yt-dlp ffmpeg
@@ -33,42 +42,60 @@ brew install yt-dlp ffmpeg
 cargo run
 ```
 
-The first screen reports the detected `yt-dlp` and `ffmpeg` paths. Settings can override either path.
+The header shows the detected paths for `yt-dlp` and `ffmpeg`. You can override both paths in Settings.
+
+For a release build:
+
+```sh
+cargo build --release
+./target/release/yt-dlp-tui
+```
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| `a` | Add a job |
-| `j` / `k`, arrow keys | Move through jobs or fields |
-| `Tab` / `Shift-Tab` | Move between form fields |
+| `j` / `k`, Up / Down | Move through fields or scroll Review and the Progress log |
 | Left / Right | Change the selected option |
-| `Enter` | Probe, review, confirm, or edit |
-| `c` | Cancel the selected queued or active job |
-| `r` | Retry a failed or cancelled job |
-| `o` | Open the selected output in Finder |
-| `1` / `2` / `3` | Open Queue, History, or Settings |
-| `?` | Open Help |
-| `q` | Quit; active jobs require a second confirmation |
+| Page Up / Page Down | Scroll Review or the Progress log by ten lines |
+| `Enter` | Continue, start a download, begin a new download, or edit a setting |
+| `Esc` | Go back, stop reading metadata, or close a panel |
+| `c` | Cancel the active download |
+| `n` | Begin a new download from Done |
+| `r` | Retry a failed or cancelled download from Done |
+| `o` | Open the output in Finder from Done |
+| `F1` / `F2` / `F3` | Open Help, History, or Settings |
+| `x` | Clear History while its panel is open. Downloaded files are untouched |
+| `e` / `s` | Edit or save Settings while its panel is open |
+| `q` | Quit. An active download requires a second confirmation |
 
-The first browser-cookie selection asks for confirmation. Closing the selected browser before retrying can resolve cookie database access errors.
+Mouse movement highlights clickable fields and actions. Click a text field to focus it, click a choice to advance it, and use the wheel to scroll Review or Progress.
 
-## Privacy
+## Browser cookies
 
-The application starts the local `yt-dlp` executable with the selected browser profile. It does not export cookies, store cookie values, or send telemetry. History excludes browser, profile, cookie, and command details.
+The first browser-cookie selection asks for confirmation. On the first successful Probe for a browser and profile, the app asks the local `yt-dlp` executable to read that profile and export the cookies to a private temporary Netscape cookie jar. On macOS, the jar is created with owner-only permissions. Later probes, downloads, and retries for the same browser and profile reuse it during that app session.
 
-## Not in the first release
+The temporary directory and jar are removed when the app exits. The jar path and browser authentication details are scrubbed from displayed logs and errors. Config and history do not store the browser, profile, cookie jar, or generated command. The app sends no telemetry.
 
-- Playlist and channel downloads
-- Site search
-- Advanced `yt-dlp` arguments
-- MP3 conversion
-- Embedded or automatically generated subtitles
-- Pause, background downloads, or automatic cross-session resume
-- Safari or Edge cookies
-- `cookies.txt` import
-- Bundled or automatically updated `yt-dlp` and `ffmpeg`
+Some browsers lock their cookie database while running. If Probe reports a cookie database access error, close the selected browser and retry.
+
+## Settings and history
+
+Settings stores the output directory and optional paths to `yt-dlp` and `ffmpeg`. History stores the URL, title, result, output path, and timestamp for the latest 100 completed, failed, or cancelled downloads. Press `x` in History to clear these entries without deleting downloaded files.
+
+Both files live in the standard macOS application directories selected for `com.softmaxe.yt-dlp-tui`.
+
+## Limitations
+
+- No playlist or channel downloads
+- No site search or advanced `yt-dlp` arguments
+- No MP3 conversion
+- No embedded or automatically generated subtitles
+- No pause, background downloads, or automatic cross-session resume
+- No Safari or Edge cookies
+- No `cookies.txt` import
+- No bundled or automatically updated `yt-dlp` or `ffmpeg`
 
 ## License
 
-MIT
+[MIT](LICENSE)

@@ -15,7 +15,10 @@ pub const HEADING: Color = Color::Rgb(0xb4, 0xbe, 0xfe);
 pub const KEY: Color = Color::Rgb(0x89, 0xb4, 0xfa);
 pub const PROGRESS: Color = Color::Rgb(0x89, 0xb4, 0xfa);
 pub const SUCCESS: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+pub const WORKING: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
+pub const ERROR: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
 pub const SELECTION_BACKGROUND: Color = Color::Rgb(0x31, 0x32, 0x44);
+pub const HOVER_BACKGROUND: Color = Color::Rgb(0x45, 0x47, 0x5a);
 
 pub fn panel(title: &str, focused: bool) -> Block<'_> {
     let border = if focused { FOCUS } else { BORDER };
@@ -31,6 +34,20 @@ pub fn selected() -> Style {
     Style::default()
         .fg(FOREGROUND)
         .bg(SELECTION_BACKGROUND)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn hovered() -> Style {
+    Style::default()
+        .fg(HEADING)
+        .bg(HOVER_BACKGROUND)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn selected_hovered() -> Style {
+    Style::default()
+        .fg(FOCUS)
+        .bg(HOVER_BACKGROUND)
         .add_modifier(Modifier::BOLD)
 }
 

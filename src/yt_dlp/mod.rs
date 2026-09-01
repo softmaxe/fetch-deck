@@ -58,13 +58,18 @@ pub fn build_probe_command(
     paths: &YtDlpPaths,
     url: &str,
     authentication: &Authentication,
+    cookie_jar: Option<&Path>,
+    import_browser_cookies: bool,
 ) -> CommandSpec {
     let mut args = vec![
         "--dump-single-json".to_owned(),
         "--skip-download".to_owned(),
         "--no-playlist".to_owned(),
     ];
-    add_authentication(&mut args, authentication);
+    if import_browser_cookies {
+        add_browser_authentication(&mut args, authentication);
+    }
+    add_cookie_jar(&mut args, cookie_jar);
     args.push("--".to_owned());
     args.push(url.to_owned());
     CommandSpec {
@@ -78,7 +83,7 @@ pub fn build_download_command(
     url: &str,
     output_directory: &Path,
     mode: &DownloadMode,
-    authentication: &Authentication,
+    cookie_jar: Option<&Path>,
 ) -> CommandSpec {
     let output_template = output_directory
         .join("%(title)s [%(id)s].%(ext)s")
@@ -143,7 +148,7 @@ pub fn build_download_command(
             ]);
         }
     }
-    add_authentication(&mut args, authentication);
+    add_cookie_jar(&mut args, cookie_jar);
     args.push("--".to_owned());
     args.push(url.to_owned());
     CommandSpec {
@@ -152,9 +157,18 @@ pub fn build_download_command(
     }
 }
 
-fn add_authentication(args: &mut Vec<String>, authentication: &Authentication) {
+fn add_browser_authentication(args: &mut Vec<String>, authentication: &Authentication) {
     if let Some(source) = authentication.browser_cookie_source() {
         args.extend(["--cookies-from-browser".to_owned(), source]);
+    }
+}
+
+fn add_cookie_jar(args: &mut Vec<String>, cookie_jar: Option<&Path>) {
+    if let Some(cookie_jar) = cookie_jar {
+        args.extend([
+            "--cookies".to_owned(),
+            cookie_jar.to_string_lossy().into_owned(),
+        ]);
     }
 }
 
@@ -363,6 +377,8 @@ mod tests {
                 &YtDlpPaths::default(),
                 "https://example.test/video",
                 &cookie_auth(browser, Some("Profile 1")),
+                Some(Path::new("cookies.txt")),
+                true,
             );
             let index = command
                 .args
@@ -374,15 +390,16 @@ mod tests {
     }
 
     #[test]
-    fn probe_and_download_disable_playlists_and_share_auth() {
+    fn probe_and_download_disable_playlists() {
         let auth = cookie_auth(crate::domain::Browser::Chrome, None);
-        let probe = build_probe_command(&YtDlpPaths::default(), "url", &auth);
+        let jar = Path::new("cookies.txt");
+        let probe = build_probe_command(&YtDlpPaths::default(), "url", &auth, Some(jar), true);
         let download = build_download_command(
             &YtDlpPaths::default(),
             "url",
             Path::new("downloads"),
             &DownloadMode::default(),
-            &auth,
+            Some(jar),
         );
         for command in [probe, download] {
             assert!(command.args.iter().any(|arg| arg == "--no-playlist"));
@@ -390,7 +407,46 @@ mod tests {
                 command
                     .args
                     .windows(2)
-                    .any(|args| args == ["--cookies-from-browser", "chrome"])
+                    .any(|args| args == ["--cookies", "cookies.txt"])
+            );
+        }
+    }
+
+    #[test]
+    fn browser_cookie_workflow_imports_once_then_reuses_one_session_jar() {
+        let auth = cookie_auth(crate::domain::Browser::Brave, Some("Profile 1"));
+        let jar = Path::new("session-cookies.txt");
+        let probe = build_probe_command(&YtDlpPaths::default(), "url", &auth, Some(jar), true);
+        let download = build_download_command(
+            &YtDlpPaths::default(),
+            "url",
+            Path::new("downloads"),
+            &DownloadMode::default(),
+            Some(jar),
+        );
+        let retry = build_download_command(
+            &YtDlpPaths::default(),
+            "url",
+            Path::new("downloads"),
+            &DownloadMode::default(),
+            Some(jar),
+        );
+        let commands = [&probe, &download, &retry];
+
+        assert_eq!(
+            commands
+                .iter()
+                .flat_map(|command| command.args.iter())
+                .filter(|arg| arg.as_str() == "--cookies-from-browser")
+                .count(),
+            1
+        );
+        for command in commands {
+            assert!(
+                command
+                    .args
+                    .windows(2)
+                    .any(|args| args == ["--cookies", jar.to_str().unwrap()])
             );
         }
     }
@@ -402,7 +458,7 @@ mod tests {
             "url",
             Path::new("downloads"),
             &DownloadMode::default(),
-            &Authentication::None,
+            None,
         );
 
         assert!(command.args.iter().any(|arg| arg == "--print"));
@@ -428,7 +484,7 @@ mod tests {
             &DownloadMode::Video {
                 quality: Quality::P1080,
             },
-            &Authentication::None,
+            None,
         );
         assert!(command.args.windows(2).any(|args| {
             args == [
@@ -451,7 +507,7 @@ mod tests {
             "url",
             Path::new("."),
             &DownloadMode::Audio,
-            &Authentication::None,
+            None,
         );
         assert!(
             audio
@@ -467,7 +523,7 @@ mod tests {
                 language: "en".to_owned(),
                 format: SubtitleFormat::Srt,
             },
-            &Authentication::None,
+            None,
         );
         assert!(
             subtitles
