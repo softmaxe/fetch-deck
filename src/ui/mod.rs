@@ -141,23 +141,30 @@ fn draw_header(frame: &mut Frame, area: Rect, model: &UiModel) {
         Span::styled(
             " YT-DLP TUI ",
             Style::default()
-                .fg(theme::BACKGROUND)
-                .bg(theme::BROADCAST_RED)
+                .fg(theme::HEADING)
+                .bg(theme::PANEL)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("  {page}"), Style::default().fg(theme::TEXT)),
+        Span::styled(
+            format!("  {page}"),
+            Style::default().fg(theme::FOREGROUND).bg(theme::PANEL),
+        ),
         Span::styled(
             format!(
                 "    yt-dlp {}  ffmpeg {} ",
                 model.dependencies.yt_dlp, model.dependencies.ffmpeg
             ),
-            theme::dimmed(),
+            theme::faint().bg(theme::PANEL),
         ),
     ]);
     frame.render_widget(
         Paragraph::new(line)
-            .block(Block::default().borders(Borders::BOTTOM))
-            .style(Style::default().bg(theme::BACKGROUND)),
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(theme::BORDER)),
+            )
+            .style(Style::default().bg(theme::PANEL)),
         area,
     );
 }
@@ -191,7 +198,7 @@ fn draw_queue_list(frame: &mut Frame, area: Rect, model: &UiModel) {
             let style = if index == model.selected_queue {
                 theme::selected()
             } else {
-                Style::default().fg(theme::TEXT).bg(theme::BACKGROUND)
+                Style::default().fg(theme::FOREGROUND).bg(theme::SURFACE)
             };
             Row::new(vec![
                 Cell::from(job.title.as_str()),
@@ -211,7 +218,7 @@ fn draw_queue_list(frame: &mut Frame, area: Rect, model: &UiModel) {
     .header(
         Row::new(["TITLE", "STATE", "GET"]).style(
             Style::default()
-                .fg(theme::BUFFER_GOLD)
+                .fg(theme::HEADING)
                 .add_modifier(Modifier::BOLD),
         ),
     )
@@ -228,11 +235,11 @@ fn draw_job_detail(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
                 Line::from(""),
                 Line::from(Span::styled(
                     "SOURCE -> PROBE -> QUEUE -> GET -> MERGE -> DONE",
-                    theme::dimmed(),
+                    theme::faint(),
                 )),
                 Line::from("Press a to add a video URL."),
             ])
-            .style(theme::dimmed())
+            .style(theme::muted())
             .block(theme::panel(" Transport ", false)),
             area,
         );
@@ -249,23 +256,23 @@ fn draw_job_detail(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
     let progress = job.progress_percent.min(100);
     let detail = vec![
         Line::from(vec![
-            Span::styled("Title  ", theme::dimmed()),
+            Span::styled("Title  ", theme::muted()),
             Span::raw(&job.title),
         ]),
         Line::from(vec![
-            Span::styled("Source ", theme::dimmed()),
+            Span::styled("Source ", theme::muted()),
             Span::raw(&job.source),
         ]),
         Line::from(vec![
-            Span::styled("Format ", theme::dimmed()),
+            Span::styled("Format ", theme::muted()),
             Span::raw(&job.format),
         ]),
         Line::from(vec![
-            Span::styled("Output ", theme::dimmed()),
+            Span::styled("Output ", theme::muted()),
             Span::raw(&job.output),
         ]),
         Line::from(vec![
-            Span::styled("Transfer ", theme::dimmed()),
+            Span::styled("Transfer ", theme::muted()),
             Span::raw(format!(
                 "{} / {}  {}  ETA {}",
                 job.downloaded, job.total, job.speed, job.eta
@@ -284,7 +291,7 @@ fn draw_job_detail(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
         Gauge::default()
             .ratio(f64::from(progress) / 100.0)
             .label(format!("{}  {progress}%", job.status))
-            .gauge_style(Style::default().fg(theme::SIGNAL_BLUE).bg(theme::PANEL)),
+            .gauge_style(Style::default().fg(theme::PROGRESS).bg(theme::SURFACE)),
         parts[2],
     );
     let logs = job
@@ -296,7 +303,7 @@ fn draw_job_detail(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
         Paragraph::new(logs)
             .scroll((job.log_offset, 0))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(theme::MUTED).bg(theme::BACKGROUND))
+            .style(Style::default().fg(theme::MUTED).bg(theme::SURFACE))
             .block(theme::panel(" Log  Up/Down Scroll ", false)),
         parts[3],
     );
@@ -369,7 +376,7 @@ fn draw_add_job(frame: &mut Frame, area: Rect, add: &AddJobView) {
     frame.render_widget(
         Paragraph::new(actions)
             .alignment(Alignment::Center)
-            .style(Style::default().fg(theme::TEXT)),
+            .style(Style::default().fg(theme::KEY)),
         parts[2],
     );
 }
@@ -385,17 +392,16 @@ fn draw_add_rail(frame: &mut Frame, area: Rect, stage: AddStage) {
     let mut spans = Vec::new();
     for (index, name) in names.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(" -> ", theme::dimmed()));
+            spans.push(Span::styled(" -> ", theme::faint()));
         }
         let style = if index < current {
-            Style::default().fg(theme::READY_GREEN)
+            Style::default().fg(theme::SUCCESS)
         } else if index == current {
             Style::default()
-                .fg(theme::BACKGROUND)
-                .bg(theme::BUFFER_GOLD)
+                .fg(theme::FOCUS)
                 .add_modifier(Modifier::BOLD)
         } else {
-            theme::dimmed()
+            theme::faint()
         };
         spans.push(Span::styled(format!(" {name} "), style));
     }
@@ -429,7 +435,7 @@ fn draw_history(frame: &mut Frame, area: Rect, model: &UiModel) {
         .header(
             Row::new(["TITLE", "RESULT", "FINISHED", "OUTPUT"]).style(
                 Style::default()
-                    .fg(theme::BUFFER_GOLD)
+                    .fg(theme::HEADING)
                     .add_modifier(Modifier::BOLD),
             ),
         )
@@ -447,14 +453,14 @@ fn draw_settings(frame: &mut Frame, area: Rect, model: &UiModel) {
             let style = if index == model.selected_setting {
                 theme::selected()
             } else {
-                Style::default().fg(theme::TEXT).bg(theme::BACKGROUND)
+                Style::default().fg(theme::FOREGROUND).bg(theme::SURFACE)
             };
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(format!("{:<18}", field.name), Modifier::BOLD),
                     Span::raw(&field.value),
                 ]),
-                Line::from(Span::styled(field.hint.as_str(), theme::dimmed())),
+                Line::from(Span::styled(field.hint.as_str(), theme::muted())),
             ])
             .style(style)
         });
@@ -503,18 +509,22 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel) {
     let lines = vec![
         Line::from(Span::styled(
             format!(" {status} "),
-            Style::default().fg(theme::TEXT),
+            Style::default().fg(theme::MUTED).bg(theme::PANEL),
         )),
         Line::from(Span::styled(
             actions,
-            Style::default().fg(theme::BUFFER_GOLD),
+            Style::default().fg(theme::KEY).bg(theme::PANEL),
         )),
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .block(Block::default().borders(Borders::TOP))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(theme::BORDER)),
+            )
             .wrap(Wrap { trim: true })
-            .style(Style::default().bg(theme::BACKGROUND)),
+            .style(Style::default().bg(theme::PANEL)),
         area,
     );
 }
@@ -524,17 +534,16 @@ fn transport_rail(current: usize) -> Paragraph<'static> {
     let mut spans = Vec::new();
     for (index, stage) in stages.into_iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(" -> ", theme::dimmed()));
+            spans.push(Span::styled(" -> ", theme::faint()));
         }
         let style = if index < current {
-            Style::default().fg(theme::READY_GREEN)
+            Style::default().fg(theme::SUCCESS)
         } else if index == current {
             Style::default()
-                .fg(theme::BACKGROUND)
-                .bg(theme::BROADCAST_RED)
+                .fg(theme::FOCUS)
                 .add_modifier(Modifier::BOLD)
         } else {
-            theme::dimmed()
+            theme::faint()
         };
         spans.push(Span::styled(format!(" {stage} "), style));
     }
@@ -543,7 +552,7 @@ fn transport_rail(current: usize) -> Paragraph<'static> {
 
 fn field_line<'a>(name: &'a str, value: &'a str) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("{name:<10}"), theme::dimmed()),
+        Span::styled(format!("{name:<10}"), theme::muted()),
         Span::raw(value),
     ])
 }
@@ -553,14 +562,14 @@ fn field_line_with_focus<'a>(name: &'a str, value: &'a str, focused: bool) -> Li
     let style = if focused {
         theme::selected()
     } else {
-        Style::default().fg(theme::TEXT).bg(theme::BACKGROUND)
+        Style::default().fg(theme::FOREGROUND).bg(theme::SURFACE)
     };
     Line::from(format!("{marker} {name:<9}{value}")).style(style)
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, text::Text};
 
     use super::*;
 
@@ -646,6 +655,78 @@ mod tests {
         ] {
             render(&model_for(page));
         }
+    }
+
+    #[test]
+    fn root_background_uses_background_role() {
+        let backend = TestBackend::new(2, 1);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Block::default().style(Style::default().bg(theme::BACKGROUND)),
+                    frame.area(),
+                );
+            })
+            .expect("background should render");
+
+        assert_eq!(terminal.backend().buffer()[(0, 0)].bg, theme::BACKGROUND);
+    }
+
+    #[test]
+    fn panel_roles_render_consistently() {
+        let backend = TestBackend::new(12, 3);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        terminal
+            .draw(|frame| {
+                let panels = Layout::horizontal([Constraint::Length(6), Constraint::Length(6)])
+                    .split(frame.area());
+                frame.render_widget(theme::panel("", true), panels[0]);
+                frame.render_widget(theme::panel("", false), panels[1]);
+            })
+            .expect("panels should render");
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(0, 0)].fg, theme::FOCUS);
+        assert_eq!(buffer[(6, 0)].fg, theme::BORDER);
+        assert_eq!(buffer[(1, 1)].bg, theme::SURFACE);
+        assert_eq!(buffer[(7, 1)].bg, theme::SURFACE);
+    }
+
+    #[test]
+    fn selected_role_uses_selection_background() {
+        let backend = TestBackend::new(8, 1);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Paragraph::new(Text::from("selected")).style(theme::selected()),
+                    frame.area(),
+                );
+            })
+            .expect("selection should render");
+        let cell = &terminal.backend().buffer()[(0, 0)];
+
+        assert_eq!(cell.fg, theme::FOREGROUND);
+        assert_eq!(cell.bg, theme::SELECTION_BACKGROUND);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn page_chrome_and_queue_roles_match_theme() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        terminal
+            .draw(|frame| draw(frame, &model_for(Page::Queue)))
+            .expect("queue should render");
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(1, 0)].bg, theme::PANEL);
+        assert_eq!(buffer[(1, 23)].bg, theme::PANEL);
+        assert_eq!(buffer[(1, 4)].bg, theme::SURFACE);
+        assert_eq!(buffer[(1, 4)].fg, theme::HEADING);
+        assert_eq!(buffer[(1, 5)].bg, theme::SELECTION_BACKGROUND);
+        assert_eq!(buffer[(1, 22)].fg, theme::KEY);
     }
 
     #[test]

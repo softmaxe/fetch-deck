@@ -3,32 +3,41 @@ use ratatui::{
     widgets::{Block, BorderType, Borders},
 };
 
-pub const BACKGROUND: Color = Color::Rgb(20, 24, 29);
-pub const PANEL: Color = Color::Rgb(32, 39, 46);
-pub const TEXT: Color = Color::Rgb(231, 226, 215);
-pub const MUTED: Color = Color::Rgb(139, 151, 161);
-pub const BROADCAST_RED: Color = Color::Rgb(224, 96, 83);
-pub const BUFFER_GOLD: Color = Color::Rgb(210, 165, 74);
-pub const SIGNAL_BLUE: Color = Color::Rgb(104, 159, 204);
-pub const READY_GREEN: Color = Color::Rgb(108, 179, 156);
+pub const BACKGROUND: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
+pub const SURFACE: Color = Color::Rgb(0x18, 0x18, 0x25);
+pub const PANEL: Color = Color::Rgb(0x11, 0x11, 0x1b);
+pub const FOREGROUND: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
+pub const MUTED: Color = Color::Rgb(0xa6, 0xad, 0xc8);
+pub const FAINT: Color = Color::Rgb(0x7f, 0x84, 0x9c);
+pub const BORDER: Color = Color::Rgb(0x45, 0x47, 0x5a);
+pub const FOCUS: Color = Color::Rgb(0xcb, 0xa6, 0xf7);
+pub const HEADING: Color = Color::Rgb(0xb4, 0xbe, 0xfe);
+pub const KEY: Color = Color::Rgb(0x89, 0xb4, 0xfa);
+pub const PROGRESS: Color = Color::Rgb(0x89, 0xb4, 0xfa);
+pub const SUCCESS: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+pub const SELECTION_BACKGROUND: Color = Color::Rgb(0x31, 0x32, 0x44);
 
 pub fn panel(title: &str, focused: bool) -> Block<'_> {
-    let border = if focused { BROADCAST_RED } else { PANEL };
+    let border = if focused { FOCUS } else { BORDER };
     Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(BACKGROUND).fg(TEXT))
+        .style(Style::default().bg(SURFACE).fg(FOREGROUND))
 }
 
 pub fn selected() -> Style {
     Style::default()
-        .fg(BACKGROUND)
-        .bg(BUFFER_GOLD)
+        .fg(FOREGROUND)
+        .bg(SELECTION_BACKGROUND)
         .add_modifier(Modifier::BOLD)
 }
 
-pub fn dimmed() -> Style {
-    Style::default().fg(MUTED).bg(BACKGROUND)
+pub fn muted() -> Style {
+    Style::default().fg(MUTED)
+}
+
+pub fn faint() -> Style {
+    Style::default().fg(FAINT)
 }
