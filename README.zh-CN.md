@@ -55,8 +55,8 @@ brew install yt-dlp ffmpeg
 ```
 
 ```sh
-git clone https://github.com/softmaxe/FetchDeck.git
-cd FetchDeck
+git clone https://github.com/softmaxe/fetch-deck.git
+cd fetch-deck
 cargo run
 ```
 

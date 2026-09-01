@@ -174,7 +174,7 @@ jobs:
             > Formula/fetchdeck.rb <<'RUBY'
           class Fetchdeck < Formula
             desc "Friendly terminal interface for yt-dlp"
-            homepage "https://github.com/softmaxe/FetchDeck"
+            homepage "https://github.com/softmaxe/fetch-deck"
             license "@LICENSE@"
 
             depends_on "ffmpeg"
@@ -182,10 +182,10 @@ jobs:
             depends_on "yt-dlp"
 
             if Hardware::CPU.arm?
-              url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@ARM_ARCHIVE@"
+              url "https://github.com/softmaxe/fetch-deck/releases/download/v@VERSION@/@ARM_ARCHIVE@"
               sha256 "@ARM_SHA@"
             else
-              url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@INTEL_ARCHIVE@"
+              url "https://github.com/softmaxe/fetch-deck/releases/download/v@VERSION@/@INTEL_ARCHIVE@"
               sha256 "@INTEL_SHA@"
             end
 

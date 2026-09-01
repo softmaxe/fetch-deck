@@ -4,7 +4,7 @@ version = "1.0.1"
 edition = "2024"
 description = "A friendly terminal interface for yt-dlp"
 license = "MIT"
-repository = "https://github.com/softmaxe/FetchDeck"
+repository = "https://github.com/softmaxe/fetch-deck"
 
 [dependencies]
 anyhow = "1.0.104"
