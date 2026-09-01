@@ -1,0 +1,310 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Tag must be a complete semantic version such as v1.2.3." >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          manifest_version="$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p;}' Cargo.toml | head -n 1)"
+          if [[ -z "${manifest_version}" || "${version}" != "${manifest_version}" ]]; then
+            echo "Tag version ${version} does not match Cargo.toml package version ${manifest_version:-<missing>}." >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  native:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            machine: arm64
+            lipo_arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            machine: x86_64
+            lipo_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and test
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_LIPO_ARCH: ${{ matrix.lipo_arch }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual_machine="$(uname -m)"
+          if [[ "${actual_machine}" != "${EXPECTED_MACHINE}" ]]; then
+            echo "Runner architecture ${actual_machine} does not match ${EXPECTED_MACHINE}." >&2
+            exit 1
+          fi
+          rustup target add "${TARGET}"
+          cargo test --locked
+          cargo build --locked --release --target "${TARGET}"
+          binary="target/${TARGET}/release/fetchdeck"
+          test -x "${binary}"
+          lipo_archs="$(lipo -archs "${binary}")"
+          if [[ " ${lipo_archs} " != *" ${EXPECTED_LIPO_ARCH} "* ]]; then
+            echo "Binary architectures '${lipo_archs}' do not include ${EXPECTED_LIPO_ARCH}." >&2
+            exit 1
+          fi
+          archive="fetchdeck-v${VERSION}-${TARGET}.tar.gz"
+          stage="$(mktemp -d)"
+          trap 'rm -rf "${stage}"' EXIT
+          install -m 0755 "${binary}" "${stage}/fetchdeck"
+          install -m 0644 LICENSE README.md README.zh-CN.md "${stage}/"
+          tar -C "${stage}" -czf "${archive}" fetchdeck LICENSE README.md README.zh-CN.md
+          printf '%s\n' fetchdeck LICENSE README.md README.zh-CN.md > expected-files.txt
+          tar -tzf "${archive}" | sed 's#^\./##' | sort > archive-files.txt
+          sort expected-files.txt -o expected-files.txt
+          diff -u expected-files.txt archive-files.txt
+          shasum -a 256 "${archive}" > "${archive}.sha256"
+          shasum -a 256 -c "${archive}.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.target }}
+          path: |
+            fetchdeck-v${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz
+            fetchdeck-v${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [validate, native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - name: Verify and publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find dist -maxdepth 1 -type f -name '*.tar.gz' -print | sort)
+          mapfile -t checksums < <(find dist -maxdepth 1 -type f -name '*.tar.gz.sha256' -print | sort)
+          if [[ "${#archives[@]}" -ne 2 || "${#checksums[@]}" -ne 2 ]]; then
+            echo "Expected exactly two archives and two checksums." >&2
+            exit 1
+          fi
+          for checksum in "${checksums[@]}"; do
+            (cd dist && sha256sum -c "$(basename "${checksum}")")
+          done
+          expected=(
+            "dist/fetchdeck-v${VERSION}-aarch64-apple-darwin.tar.gz"
+            "dist/fetchdeck-v${VERSION}-x86_64-apple-darwin.tar.gz"
+          )
+          for archive in "${expected[@]}"; do
+            test -f "${archive}"
+            test -f "${archive}.sha256"
+          done
+          if gh release view "${TAG}" --repo "${REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          gh release create "${TAG}" "${archives[@]}" "${checksums[@]}" \
+            --repo "${REPOSITORY}" --title "FetchDeck ${TAG}" --generate-notes --verify-tag
+
+  formula:
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - name: Generate formula
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          license="$(sed -n '/^\[package\]/,/^\[/{s/^license = "\([^"]*\)"/\1/p;}' Cargo.toml | head -n 1)"
+          test -n "${license}"
+          arm_archive="fetchdeck-v${VERSION}-aarch64-apple-darwin.tar.gz"
+          intel_archive="fetchdeck-v${VERSION}-x86_64-apple-darwin.tar.gz"
+          arm_sha="$(awk '{print $1}' "dist/${arm_archive}.sha256")"
+          intel_sha="$(awk '{print $1}' "dist/${intel_archive}.sha256")"
+          mkdir -p Formula
+          sed \
+            -e "s/@VERSION@/${VERSION}/g" \
+            -e "s/@LICENSE@/${license}/g" \
+            -e "s/@ARM_ARCHIVE@/${arm_archive}/g" \
+            -e "s/@ARM_SHA@/${arm_sha}/g" \
+            -e "s/@INTEL_ARCHIVE@/${intel_archive}/g" \
+            -e "s/@INTEL_SHA@/${intel_sha}/g" \
+            > Formula/fetchdeck.rb <<'RUBY'
+          class Fetchdeck < Formula
+            desc "Friendly terminal interface for yt-dlp"
+            homepage "https://github.com/softmaxe/FetchDeck"
+            version "@VERSION@"
+            license "@LICENSE@"
+
+            on_arm do
+              url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@ARM_ARCHIVE@"
+              sha256 "@ARM_SHA@"
+            end
+
+            on_intel do
+              url "https://github.com/softmaxe/FetchDeck/releases/download/v@VERSION@/@INTEL_ARCHIVE@"
+              sha256 "@INTEL_SHA@"
+            end
+
+            depends_on :macos
+            depends_on "yt-dlp"
+            depends_on "ffmpeg"
+
+            def install
+              bin.install "fetchdeck"
+              doc.install "README.md", "README.zh-CN.md", "LICENSE"
+            end
+
+            test do
+              assert_predicate bin/"fetchdeck", :executable?
+            end
+          end
+          RUBY
+          ruby -c Formula/fetchdeck.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: homebrew-formula
+          path: Formula/fetchdeck.rb
+          if-no-files-found: error
+
+  formula-test:
+    needs: formula
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            machine: arm64
+            lipo_arch: arm64
+          - runner: macos-15-intel
+            machine: x86_64
+            lipo_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: homebrew-formula
+          path: Formula
+      - name: Audit and install formula
+        shell: bash
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_LIPO_ARCH: ${{ matrix.lipo_arch }}
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -m)" != "${EXPECTED_MACHINE}" ]]; then
+            echo "Unexpected runner architecture." >&2
+            exit 1
+          fi
+          brew audit --strict Formula/fetchdeck.rb
+          brew install --formula Formula/fetchdeck.rb
+          binary="$(brew --prefix fetchdeck)/bin/fetchdeck"
+          test -x "${binary}"
+          lipo_archs="$(lipo -archs "${binary}")"
+          if [[ " ${lipo_archs} " != *" ${EXPECTED_LIPO_ARCH} "* ]]; then
+            echo "Installed binary architectures '${lipo_archs}' do not include ${EXPECTED_LIPO_ARCH}." >&2
+            exit 1
+          fi
+          brew test fetchdeck
+
+  tap-sync:
+    needs: [validate, formula-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require tap token
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is required to update softmaxe/homebrew-tap." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          repository: softmaxe/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+          ref: main
+          persist-credentials: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: homebrew-formula
+          path: generated/Formula
+      - name: Update tap
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          current_version="0.0.0"
+          if [[ -f homebrew-tap/Formula/fetchdeck.rb ]]; then
+            current_version="$(sed -n 's/^  version "\([^"]*\)"/\1/p' homebrew-tap/Formula/fetchdeck.rb | head -n 1)"
+            test -n "${current_version}"
+          fi
+          newest="$(printf '%s\n%s\n' "${current_version}" "${VERSION}" | sort -V | tail -n 1)"
+          if [[ "${newest}" != "${VERSION}" ]]; then
+            echo "Refusing to replace tap version ${current_version} with older version ${VERSION}." >&2
+            exit 1
+          fi
+          install -m 0644 generated/Formula/fetchdeck.rb homebrew-tap/Formula/fetchdeck.rb
+          cd homebrew-tap
+          changed="$(git status --short)"
+          if [[ -z "${changed}" ]]; then
+            echo "Tap formula is already current."
+            exit 0
+          fi
+          if [[ "${changed}" != " M Formula/fetchdeck.rb" && "${changed}" != "?? Formula/fetchdeck.rb" ]]; then
+            echo "Unexpected tap changes detected:" >&2
+            printf '%s\n' "${changed}" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/fetchdeck.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update fetchdeck to ${VERSION}"
+          git push origin main
