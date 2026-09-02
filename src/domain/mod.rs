@@ -122,6 +122,28 @@ pub enum JobStatus {
     Cancelled,
 }
 
+impl JobStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Queued => "Queued",
+            Self::Probing => "Probing",
+            Self::Downloading => "Downloading",
+            Self::Merging => "Merging",
+            Self::Completed => "Completed",
+            Self::Failed => "Failed",
+            Self::Cancelled => "Cancelled",
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Queued | Self::Downloading | Self::Merging)
+    }
+
+    pub fn is_retryable(self) -> bool {
+        matches!(self, Self::Failed | Self::Cancelled)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct JobProgress {
     pub downloaded_bytes: Option<u64>,
@@ -147,7 +169,6 @@ pub struct MediaMetadata {
     pub thumbnail_url: Option<String>,
     pub subtitles: Vec<SubtitleTrack>,
     pub available_qualities: Vec<Quality>,
-    pub supports_2160p: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

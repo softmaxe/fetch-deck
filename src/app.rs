@@ -31,6 +31,7 @@ use crate::{
     },
 };
 
+const HISTORY_LIMIT: usize = 100;
 const MAX_LOG_LINES: usize = 300;
 const NETSCAPE_COOKIE_HEADER: &str = "# Netscape HTTP Cookie File\n";
 
@@ -104,7 +105,6 @@ struct PendingCookieSession {
 struct Dependencies {
     paths: YtDlpPaths,
     yt_dlp_ready: bool,
-    ffmpeg_ready: bool,
     yt_dlp_summary: String,
     ffmpeg_summary: String,
 }
@@ -162,7 +162,7 @@ impl AddForm {
                 profile: self
                     .profiles
                     .get(self.profile_index)
-                    .map(|profile| profile.value.clone()),
+                    .map(|profile| profile.name.clone()),
             })
             .unwrap_or(Authentication::None)
     }
@@ -182,7 +182,7 @@ impl AddForm {
         } else {
             self.profiles
                 .get(self.profile_index)
-                .map(|profile| profile.label.clone())
+                .map(|profile| profile.name.clone())
                 .unwrap_or_else(|| "Default profile".to_owned())
         }
     }
@@ -356,7 +356,9 @@ impl App {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
                     Event::Paste(text) => self.handle_paste(&text),
-                    Event::Mouse(mouse) => self.handle_mouse(mouse, terminal.size()?.into()),
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse, terminal.size()?.into(), &model)
+                    }
                     _ => {}
                 }
             }
@@ -472,13 +474,11 @@ impl App {
                 }
             }
             (Some(Overlay::Settings), KeyCode::Down | KeyCode::Char('j')) => {
-                self.selected_setting = (self.selected_setting + 1) % self.settings_values.len();
+                self.selected_setting = cycle(self.selected_setting, self.settings_values.len(), 1);
             }
             (Some(Overlay::Settings), KeyCode::Up | KeyCode::Char('k')) => {
-                self.selected_setting = self
-                    .selected_setting
-                    .checked_sub(1)
-                    .unwrap_or(self.settings_values.len() - 1);
+                self.selected_setting =
+                    cycle(self.selected_setting, self.settings_values.len(), -1);
             }
             (Some(Overlay::Settings), KeyCode::Enter | KeyCode::Char('e')) => {
                 self.editing_setting = true;
@@ -516,10 +516,10 @@ impl App {
     fn handle_source_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                self.add.source_focus = (self.add.source_focus + 1) % 3
+                self.add.source_focus = cycle(self.add.source_focus, 3, 1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.add.source_focus = self.add.source_focus.checked_sub(1).unwrap_or(2)
+                self.add.source_focus = cycle(self.add.source_focus, 3, -1)
             }
             KeyCode::Left => self.cycle_source_choice(-1),
             KeyCode::Right => self.cycle_source_choice(1),
@@ -632,14 +632,10 @@ impl App {
         match key.code {
             KeyCode::Esc => self.screen = Screen::Source,
             KeyCode::Down | KeyCode::Char('j') => {
-                self.add.option_focus = (self.add.option_focus + 1) % self.add.option_count()
+                self.add.option_focus = cycle(self.add.option_focus, self.add.option_count(), 1)
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.add.option_focus = self
-                    .add
-                    .option_focus
-                    .checked_sub(1)
-                    .unwrap_or(self.add.option_count() - 1)
+                self.add.option_focus = cycle(self.add.option_focus, self.add.option_count(), -1)
             }
             KeyCode::Left => self.cycle_option(-1),
             KeyCode::Right => self.cycle_option(1),
@@ -703,7 +699,7 @@ impl App {
             return;
         };
         if matches!(mode, DownloadMode::Video { .. } | DownloadMode::Audio)
-            && !self.dependencies.ffmpeg_ready
+            && self.dependencies.paths.ffmpeg.is_none()
         {
             self.status_message = Some("ffmpeg is required for MP4 and M4A output".into());
             return;
@@ -791,13 +787,13 @@ impl App {
         });
     }
 
-    fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) {
+    fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect, model: &UiModel) {
         match mouse.kind {
             MouseEventKind::Moved => {
-                self.hover_target = ui::hit_test(area, &self.ui_model(), mouse.column, mouse.row);
+                self.hover_target = ui::hit_test(area, model, mouse.column, mouse.row);
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                let target = ui::hit_test(area, &self.ui_model(), mouse.column, mouse.row);
+                let target = ui::hit_test(area, model, mouse.column, mouse.row);
                 self.hover_target = target;
                 if let Some(target) = target {
                     self.activate_mouse_target(target);
@@ -924,10 +920,7 @@ impl App {
         let Some(job) = self.jobs.get(self.selected_job) else {
             return;
         };
-        if matches!(
-            job.status,
-            JobStatus::Queued | JobStatus::Downloading | JobStatus::Merging
-        ) {
+        if job.status.is_active() {
             let _ = self.runtime.commands.send(RuntimeCommand::Cancel {
                 job_id: job.id.clone(),
             });
@@ -939,7 +932,7 @@ impl App {
         let Some(job) = self.jobs.get(self.selected_job) else {
             return;
         };
-        if !matches!(job.status, JobStatus::Failed | JobStatus::Cancelled) {
+        if !job.status.is_retryable() {
             self.status_message = Some("Only failed or cancelled jobs can be retried".into());
             return;
         }
@@ -998,12 +991,7 @@ impl App {
         if self.shutting_down {
             return;
         }
-        let has_pending = self.jobs.iter().any(|job| {
-            matches!(
-                job.status,
-                JobStatus::Queued | JobStatus::Downloading | JobStatus::Merging
-            )
-        });
+        let has_pending = self.jobs.iter().any(|job| job.status.is_active());
         if has_pending && !self.quit_armed {
             self.quit_armed = true;
             self.status_message = Some(
@@ -1226,66 +1214,66 @@ impl App {
     }
 
     fn record_history(&mut self, job: &DownloadJob) {
-        let entry = HistoryEntry {
+        self.history.push(HistoryEntry {
             url: job.url.clone(),
-            title: job
-                .metadata
-                .as_ref()
-                .map(|metadata| metadata.title.clone())
-                .unwrap_or_else(|| job.url.clone()),
+            title: job_title(job),
             status: job.status,
             output_path: job.output_path.clone(),
             timestamp_unix_seconds: unix_time(),
-        };
-        self.history.push(entry.clone());
-        if self.history.len() > 100 {
-            self.history.drain(..self.history.len() - 100);
+        });
+        if self.history.len() > HISTORY_LIMIT {
+            self.history.drain(..self.history.len() - HISTORY_LIMIT);
         }
-        if let Err(error) = self.history_store.append(entry) {
+        if let Err(error) = self.history_store.save(&self.history) {
             self.status_message = Some(format!("History could not be saved: {error}"));
         }
     }
 
     fn ui_model(&self) -> UiModel {
-        let current_job = self.jobs.get(self.selected_job).map(|job| {
-            let progress = progress_percent(job);
-            JobDetails {
-                title: job_title(job),
-                source: job.url.clone(),
-                format: mode_label(&job.mode),
-                output: job
-                    .output_path
-                    .as_ref()
-                    .unwrap_or(&job.output_directory)
-                    .to_string_lossy()
-                    .into_owned(),
-                status: status_label(job.status).to_owned(),
-                progress_percent: progress,
-                downloaded: format_bytes(job.progress.downloaded_bytes),
-                total: format_bytes(
-                    job.progress
-                        .total_bytes
-                        .or(job.progress.estimated_total_bytes),
-                ),
-                speed: job
-                    .progress
-                    .speed_bytes_per_second
-                    .map(|speed| format!("{}/s", format_bytes(Some(speed as u64))))
-                    .unwrap_or_else(|| "--".into()),
-                eta: job
-                    .progress
-                    .eta_seconds
-                    .map(format_duration)
-                    .unwrap_or_else(|| "--".into()),
-                log_lines: self
-                    .logs
-                    .get(&job.id)
-                    .map(|lines| lines.iter().cloned().collect())
-                    .unwrap_or_default(),
-                log_offset: *self.log_offsets.get(&job.id).unwrap_or(&0),
-                error: job.error.clone(),
-            }
-        });
+        let current_job =
+            if self.overlay.is_none() && matches!(self.screen, Screen::Progress | Screen::Done) {
+                self.jobs.get(self.selected_job).map(|job| {
+                    let progress = progress_percent(job);
+                    JobDetails {
+                        title: job_title(job),
+                        source: job.url.clone(),
+                        format: mode_label(&job.mode),
+                        output: job
+                            .output_path
+                            .as_ref()
+                            .unwrap_or(&job.output_directory)
+                            .to_string_lossy()
+                            .into_owned(),
+                        status: job.status,
+                        progress_percent: progress,
+                        downloaded: format_bytes(job.progress.downloaded_bytes),
+                        total: format_bytes(
+                            job.progress
+                                .total_bytes
+                                .or(job.progress.estimated_total_bytes),
+                        ),
+                        speed: job
+                            .progress
+                            .speed_bytes_per_second
+                            .map(|speed| format!("{}/s", format_bytes(Some(speed as u64))))
+                            .unwrap_or_else(|| "--".into()),
+                        eta: job
+                            .progress
+                            .eta_seconds
+                            .map(format_duration)
+                            .unwrap_or_else(|| "--".into()),
+                        log_lines: self
+                            .logs
+                            .get(&job.id)
+                            .map(|lines| lines.iter().cloned().collect())
+                            .unwrap_or_default(),
+                        log_offset: *self.log_offsets.get(&job.id).unwrap_or(&0),
+                        error: job.error.clone(),
+                    }
+                })
+            } else {
+                None
+            };
 
         UiModel {
             screen: self.screen,
@@ -1296,38 +1284,45 @@ impl App {
             },
             current_job,
             workflow: self.workflow_view(),
-            history_rows: self
-                .history
-                .iter()
-                .rev()
-                .map(|entry| HistoryRow {
-                    title: entry.title.clone(),
-                    result: status_label(entry.status).to_owned(),
-                    finished_at: relative_time(entry.timestamp_unix_seconds),
-                    output: entry
-                        .output_path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "--".into()),
-                })
-                .collect(),
-            settings_fields: vec![
-                SettingField {
-                    name: "Output directory".into(),
-                    value: self.settings_values[0].clone(),
-                    hint: "Default folder for new jobs".into(),
-                },
-                SettingField {
-                    name: "yt-dlp path".into(),
-                    value: self.settings_values[1].clone(),
-                    hint: self.dependencies.yt_dlp_summary.clone(),
-                },
-                SettingField {
-                    name: "ffmpeg path".into(),
-                    value: self.settings_values[2].clone(),
-                    hint: self.dependencies.ffmpeg_summary.clone(),
-                },
-            ],
+            history_rows: if self.overlay == Some(Overlay::History) {
+                self.history
+                    .iter()
+                    .rev()
+                    .map(|entry| HistoryRow {
+                        title: entry.title.clone(),
+                        result: entry.status.label().to_owned(),
+                        finished_at: relative_time(entry.timestamp_unix_seconds),
+                        output: entry
+                            .output_path
+                            .as_ref()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "--".into()),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            settings_fields: if self.overlay == Some(Overlay::Settings) {
+                vec![
+                    SettingField {
+                        name: "Output directory".into(),
+                        value: self.settings_values[0].clone(),
+                        hint: "Default folder for new jobs".into(),
+                    },
+                    SettingField {
+                        name: "yt-dlp path".into(),
+                        value: self.settings_values[1].clone(),
+                        hint: self.dependencies.yt_dlp_summary.clone(),
+                    },
+                    SettingField {
+                        name: "ffmpeg path".into(),
+                        value: self.settings_values[2].clone(),
+                        hint: self.dependencies.ffmpeg_summary.clone(),
+                    },
+                ]
+            } else {
+                Vec::new()
+            },
             selected_setting: self.selected_setting,
             settings_editing: self.editing_setting,
             cookie_notice_pending: self.cookie_notice_pending,
@@ -1360,7 +1355,7 @@ impl App {
                     .map(format_duration)
                     .unwrap_or_else(|| "Unknown".into())
             ));
-            if metadata.supports_2160p {
+            if metadata.available_qualities.contains(&Quality::P2160) {
                 review_lines.push("4K        Available".into());
             }
         }
@@ -1397,7 +1392,6 @@ impl Dependencies {
         let yt_dlp = configured_binary(config.yt_dlp_path.as_deref(), "yt-dlp");
         let ffmpeg = configured_binary(config.ffmpeg_path.as_deref(), "ffmpeg");
         let yt_dlp_ready = yt_dlp.is_some();
-        let ffmpeg_ready = ffmpeg.is_some();
         let yt_dlp_summary = binary_summary(yt_dlp.as_deref(), "--version", "missing");
         let ffmpeg_summary = binary_summary(ffmpeg.as_deref(), "-version", "missing");
         Self {
@@ -1411,7 +1405,6 @@ impl Dependencies {
                 ffmpeg,
             },
             yt_dlp_ready,
-            ffmpeg_ready,
             yt_dlp_summary,
             ffmpeg_summary,
         }
@@ -1555,18 +1548,6 @@ fn mode_label(mode: &DownloadMode) -> String {
         DownloadMode::Subtitles { language, format } => {
             format!("Subtitles / {language} / {format:?}")
         }
-    }
-}
-
-fn status_label(status: JobStatus) -> &'static str {
-    match status {
-        JobStatus::Queued => "Queued",
-        JobStatus::Probing => "Probing",
-        JobStatus::Downloading => "Downloading",
-        JobStatus::Merging => "Merging",
-        JobStatus::Completed => "Completed",
-        JobStatus::Failed => "Failed",
-        JobStatus::Cancelled => "Cancelled",
     }
 }
 
@@ -1722,7 +1703,6 @@ mod tests {
             thumbnail_url: None,
             subtitles: Vec::new(),
             available_qualities: vec![Quality::Best],
-            supports_2160p: false,
         };
 
         app.handle_runtime_event(RuntimeEvent::ProbeFinished {
@@ -1867,12 +1847,11 @@ mod tests {
         app.config_store = ConfigStore::new(directory.path().join("config.toml"));
         app.history_store = HistoryStore::new(directory.path().join("history.json"));
         app.dependencies.yt_dlp_ready = true;
-        app.dependencies.ffmpeg_ready = true;
+        app.dependencies.paths.ffmpeg = Some(PathBuf::from("ffmpeg"));
         app.add.url = "https://example.test/video".into();
         app.add.authentication_index = 3;
         app.add.profiles = vec![BrowserProfile {
-            label: "Profile 1".into(),
-            value: "Profile 1".into(),
+            name: "Profile 1".into(),
         }];
         app.add.output = directory.path().to_string_lossy().into_owned();
         let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1904,7 +1883,6 @@ mod tests {
                 thumbnail_url: None,
                 subtitles: Vec::new(),
                 available_qualities: vec![Quality::Best],
-                supports_2160p: false,
             }),
         });
 
@@ -2028,12 +2006,13 @@ mod tests {
         app.handle_mouse(
             mouse_event(MouseEventKind::Moved, source_card.x + 1, source_card.y + 2),
             area,
+            &model,
         );
         assert_eq!(app.hover_target, Some(ui::HoverTarget::SourceField(1)));
         assert_eq!(app.add.source_focus, original_focus);
         assert_eq!(app.add.authentication_index, original_authentication);
 
-        app.handle_mouse(mouse_event(MouseEventKind::Moved, 0, 0), area);
+        app.handle_mouse(mouse_event(MouseEventKind::Moved, 0, 0), area, &model);
         assert_eq!(app.hover_target, None);
         assert_eq!(app.add.source_focus, original_focus);
         assert_eq!(app.add.authentication_index, original_authentication);
@@ -2046,7 +2025,12 @@ mod tests {
         app.screen = Screen::Review;
         app.overlay = Some(Overlay::Help);
 
-        app.handle_mouse(mouse_event(MouseEventKind::ScrollDown, 40, 12), area);
+        let model = app.ui_model();
+        app.handle_mouse(
+            mouse_event(MouseEventKind::ScrollDown, 40, 12),
+            area,
+            &model,
+        );
 
         assert_eq!(app.review_scroll, 0);
     }
@@ -2058,7 +2042,8 @@ mod tests {
         app.config_store = ConfigStore::new(directory.path().join("config.toml"));
         app.config.cookie_notice_acknowledged = false;
         let area = Rect::new(0, 0, 80, 24);
-        let card = ui::card_rect_for_test(area, &app.ui_model());
+        let model = app.ui_model();
+        let card = ui::card_rect_for_test(area, &model);
         app.handle_mouse(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
@@ -2066,12 +2051,14 @@ mod tests {
                 card.y + 2,
             ),
             area,
+            &model,
         );
         assert_eq!(app.add.source_focus, 1);
         assert_eq!(app.add.selected_browser(), Some(Browser::Chrome));
         assert!(app.cookie_notice_pending);
 
-        let enable = footer_target_position(area, "Enter Enable cookies", 1);
+        let model = app.ui_model();
+        let enable = target_position(area, &model, ui::HoverTarget::CookieEnable);
         app.handle_mouse(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
@@ -2079,10 +2066,12 @@ mod tests {
                 enable.1,
             ),
             area,
+            &model,
         );
         assert!(!app.cookie_notice_pending);
 
-        let help = footer_target_position(area, "F1 Help", 2);
+        let model = app.ui_model();
+        let help = target_position(area, &model, ui::HoverTarget::Help);
         app.handle_mouse(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
@@ -2090,6 +2079,7 @@ mod tests {
                 help.1,
             ),
             area,
+            &model,
         );
         assert_eq!(app.overlay, Some(Overlay::Help));
     }
@@ -2103,20 +2093,15 @@ mod tests {
         }
     }
 
-    fn footer_target_position(area: Rect, label: &str, line: u16) -> (u16, u16) {
-        let labels = if line == 1 {
-            vec!["Enter Enable cookies", "Esc Disable"]
-        } else {
-            vec!["F1 Help", "F2 History", "F3 Settings", "q Quit"]
-        };
-        let total = labels.iter().map(|item| item.len()).sum::<usize>() + (labels.len() - 1) * 3;
-        let start = area.width.saturating_sub(total as u16).div_ceil(2);
-        let offset = labels
-            .iter()
-            .take_while(|item| **item != label)
-            .map(|item| item.len() + 3)
-            .sum::<usize>();
-        (start + offset as u16, area.height - 3 + line)
+    fn target_position(area: Rect, model: &UiModel, target: ui::HoverTarget) -> (u16, u16) {
+        for row in area.y..area.y.saturating_add(area.height) {
+            for column in area.x..area.x.saturating_add(area.width) {
+                if ui::hit_test(area, model, column, row) == Some(target) {
+                    return (column, row);
+                }
+            }
+        }
+        panic!("target is not visible: {target:?}");
     }
 
     #[tokio::test]
@@ -2162,7 +2147,6 @@ mod tests {
             thumbnail_url: None,
             subtitles: Vec::new(),
             available_qualities: vec![Quality::Best, Quality::P1080],
-            supports_2160p: false,
         };
         app.add.probe_request_id = Some(7);
         app.screen = Screen::Probe;
@@ -2181,7 +2165,7 @@ mod tests {
             commands: command_tx,
             events: event_rx,
         };
-        app.dependencies.ffmpeg_ready = true;
+        app.dependencies.paths.ffmpeg = Some(PathBuf::from("ffmpeg"));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.screen, Screen::Progress);
         assert!(matches!(
@@ -2245,7 +2229,6 @@ mod tests {
             thumbnail_url: None,
             subtitles: Vec::new(),
             available_qualities: vec![Quality::Best, Quality::P2160],
-            supports_2160p: true,
         });
         assert!(form.qualities().contains(&Quality::P2160));
     }

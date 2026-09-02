@@ -23,6 +23,7 @@ sleep 1
 printf '%s\n' 'FETCHDECK_PROGRESS:6291456|8388608|NA|2097152|1|downloading'
 sleep 1
 printf '%s\n' 'FETCHDECK_PROGRESS:8388608|8388608|NA|2097152|0|finished'
-mkdir -p /tmp/fetchdeck-demo-home/Downloads
-: > '/tmp/fetchdeck-demo-home/Downloads/FetchDeck Demo [demo].mp4'
-printf '%s\n' 'FETCHDECK_OUTPUT:/tmp/fetchdeck-demo-home/Downloads/FetchDeck Demo [demo].mp4'
+output="$HOME/Downloads/FetchDeck Demo [demo].mp4"
+mkdir -p "$HOME/Downloads"
+: > "$output"
+printf 'FETCHDECK_OUTPUT:%s\n' "$output"

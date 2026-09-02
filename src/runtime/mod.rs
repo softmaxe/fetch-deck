@@ -98,7 +98,7 @@ async fn queue_actor(
     mut commands: mpsc::UnboundedReceiver<RuntimeCommand>,
     events: mpsc::UnboundedSender<RuntimeEvent>,
 ) {
-    let (finished_tx, mut finished_rx) = mpsc::unbounded_channel::<String>();
+    let (finished_tx, mut finished_rx) = mpsc::unbounded_channel();
     let mut pending = VecDeque::new();
     let mut active: Option<ActiveDownload> = None;
     let mut shutting_down = false;
@@ -132,10 +132,8 @@ async fn queue_actor(
                     }
                 }
             }
-            finished = finished_rx.recv(), if active.is_some() => {
-                if finished.as_deref() == active.as_ref().map(|download| download.job_id.as_str()) {
-                    active = None;
-                }
+            _ = finished_rx.recv(), if active.is_some() => {
+                active = None;
             }
         }
 
@@ -196,7 +194,7 @@ async fn run_probe_with_timeout(
 async fn run_download(
     request: DownloadRequest,
     events: mpsc::UnboundedSender<RuntimeEvent>,
-    finished: mpsc::UnboundedSender<String>,
+    finished: mpsc::UnboundedSender<()>,
     mut cancel: watch::Receiver<bool>,
 ) {
     let job_id = request.job_id;
@@ -215,7 +213,7 @@ async fn run_download(
                 kind: YtDlpErrorKind::Unknown,
                 message: format!("Could not start yt-dlp: {error}"),
             });
-            let _ = finished.send(job_id);
+            let _ = finished.send(());
             return;
         }
     };
@@ -290,7 +288,7 @@ async fn run_download(
             });
         }
     }
-    let _ = finished.send(job_id);
+    let _ = finished.send(());
 }
 
 fn handle_child_line(
@@ -417,7 +415,12 @@ mod tests {
         match events.recv().await.unwrap() {
             RuntimeEvent::ProbeFinished { request_id, result } => {
                 assert_eq!(request_id, 7);
-                assert!(result.unwrap().supports_2160p);
+                assert!(
+                    result
+                        .unwrap()
+                        .available_qualities
+                        .contains(&crate::domain::Quality::P2160)
+                );
             }
             event => panic!("unexpected event: {event:?}"),
         }

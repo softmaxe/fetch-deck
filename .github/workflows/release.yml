@@ -38,23 +38,15 @@ jobs:
 
   native:
     needs: validate
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            machine: arm64
-            lipo_arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - name: Build and test
         shell: bash
         env:
-          TARGET: ${{ matrix.target }}
-          EXPECTED_MACHINE: ${{ matrix.machine }}
-          EXPECTED_LIPO_ARCH: ${{ matrix.lipo_arch }}
+          TARGET: aarch64-apple-darwin
+          EXPECTED_MACHINE: arm64
+          EXPECTED_LIPO_ARCH: arm64
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
@@ -87,10 +79,10 @@ jobs:
           shasum -a 256 -c "${archive}.sha256"
       - uses: actions/upload-artifact@v7
         with:
-          name: native-${{ matrix.target }}
+          name: native-aarch64-apple-darwin
           path: |
-            fetchdeck-v${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz
-            fetchdeck-v${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
+            fetchdeck-v${{ needs.validate.outputs.version }}-aarch64-apple-darwin.tar.gz
+            fetchdeck-v${{ needs.validate.outputs.version }}-aarch64-apple-darwin.tar.gz.sha256
           if-no-files-found: error
 
   release:
@@ -137,7 +129,7 @@ jobs:
             --repo "${REPOSITORY}" --title "FetchDeck ${TAG}" --generate-notes --verify-tag
 
   formula:
-    needs: [validate, release]
+    needs: [validate, native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -193,15 +185,8 @@ jobs:
           if-no-files-found: error
 
   formula-test:
-    needs: formula
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            machine: arm64
-            lipo_arch: arm64
-    runs-on: ${{ matrix.runner }}
+    needs: [formula, release]
+    runs-on: macos-15
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -210,8 +195,8 @@ jobs:
       - name: Audit and install formula
         shell: bash
         env:
-          EXPECTED_MACHINE: ${{ matrix.machine }}
-          EXPECTED_LIPO_ARCH: ${{ matrix.lipo_arch }}
+          EXPECTED_MACHINE: arm64
+          EXPECTED_LIPO_ARCH: arm64
         run: |
           set -euo pipefail
           if [[ "$(uname -m)" != "${EXPECTED_MACHINE}" ]]; then

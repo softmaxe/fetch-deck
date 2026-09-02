@@ -1,12 +1,12 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Wrap},
+    Frame,
 };
 
-use crate::theme;
+use crate::{domain::JobStatus, theme};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Screen {
@@ -120,7 +120,7 @@ fn screen_actions(model: &UiModel) -> Vec<(&'static str, HoverTarget)> {
             if model
                 .current_job
                 .as_ref()
-                .is_some_and(|job| matches!(job.status.as_str(), "Failed" | "Cancelled"))
+                .is_some_and(|job| job.status.is_retryable())
             {
                 actions.push(("r Retry", HoverTarget::DoneRetry));
             }
@@ -142,7 +142,7 @@ pub struct JobDetails {
     pub source: String,
     pub format: String,
     pub output: String,
-    pub status: String,
+    pub status: JobStatus,
     pub progress_percent: u16,
     pub downloaded: String,
     pub total: String,
@@ -630,7 +630,7 @@ fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
             .ratio(f64::from(job.progress_percent.min(100)) / 100.0)
             .label(format!(
                 "{}  {}%",
-                job.status,
+                job.status.label(),
                 job.progress_percent.min(100)
             ))
             .gauge_style(Style::default().fg(theme::PROGRESS).bg(theme::SURFACE)),
@@ -661,21 +661,21 @@ fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
         );
         return;
     };
-    let status_style = match job.status.as_str() {
-        "Completed" => Style::default().fg(theme::SUCCESS),
-        "Failed" | "Cancelled" => Style::default().fg(theme::ERROR),
+    let status_style = match job.status {
+        JobStatus::Completed => Style::default().fg(theme::SUCCESS),
+        JobStatus::Failed | JobStatus::Cancelled => Style::default().fg(theme::ERROR),
         _ => Style::default().fg(theme::FOREGROUND),
     };
     let mut lines = vec![
         Line::from(Span::styled(
             format!(
                 "{}  {}",
-                if job.status == "Completed" {
+                if job.status == JobStatus::Completed {
                     "✓"
                 } else {
                     "×"
                 },
-                job.status
+                job.status.label()
             ),
             status_style.add_modifier(Modifier::BOLD),
         ))
@@ -881,12 +881,12 @@ fn field_line_with_focus<'a>(
 }
 
 fn field_line_width(name: &str, value: &str) -> u16 {
-    Line::from(format!("  {name:<9}{value}")).width() as u16
+    field_line_with_focus(name, value, false, false).width() as u16
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
 
@@ -920,9 +920,9 @@ mod tests {
                 format: "Video / MP4 / 1080p".into(),
                 output: "/Downloads/sample.mp4".into(),
                 status: if screen == Screen::Done {
-                    "Completed".into()
+                    JobStatus::Completed
                 } else {
-                    "Downloading".into()
+                    JobStatus::Downloading
                 },
                 progress_percent: 42,
                 downloaded: "42 MiB".into(),
