@@ -2,11 +2,9 @@ use crate::domain::{AppConfig, HistoryEntry};
 use directories::ProjectDirs;
 use serde::de::DeserializeOwned;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-
-const HISTORY_LIMIT: usize = 100;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -80,15 +78,6 @@ impl HistoryStore {
         atomic_write(&self.path, &bytes)
     }
 
-    pub fn append(&self, entry: HistoryEntry) -> Result<(), StorageError> {
-        let mut entries = self.load()?;
-        entries.push(entry);
-        if entries.len() > HISTORY_LIMIT {
-            entries.drain(..entries.len() - HISTORY_LIMIT);
-        }
-        self.save(&entries)
-    }
-
     pub fn clear(&self) -> Result<(), StorageError> {
         self.save(&[])
     }
@@ -113,20 +102,10 @@ where
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StorageError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("store");
-    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    let result = (|| {
-        fs::write(&temporary, contents)?;
-        fs::rename(&temporary, path)?;
-        Ok::<_, io::Error>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map_err(StorageError::from)
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(contents)?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -149,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn history_round_trip_append_and_clear() {
+    fn history_round_trip_and_clear() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("history.json");
         let store = HistoryStore::new(&path);
@@ -160,15 +139,13 @@ mod tests {
             output_path: Some(PathBuf::from("downloads/Title [abc].mp4")),
             timestamp_unix_seconds: 42,
         };
-        store.append(entry.clone()).unwrap();
+        store.save(std::slice::from_ref(&entry)).unwrap();
         assert_eq!(store.load().unwrap(), vec![entry]);
         let serialized = fs::read_to_string(path).unwrap();
         for forbidden in ["cookie", "browser", "profile", "command", "Brave"] {
-            assert!(
-                !serialized
-                    .to_ascii_lowercase()
-                    .contains(&forbidden.to_ascii_lowercase())
-            );
+            assert!(!serialized
+                .to_ascii_lowercase()
+                .contains(&forbidden.to_ascii_lowercase()));
         }
         store.clear().unwrap();
         assert!(store.load().unwrap().is_empty());

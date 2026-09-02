@@ -6,8 +6,7 @@ use crate::domain::Browser;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BrowserProfile {
-    pub label: String,
-    pub value: String,
+    pub name: String,
 }
 
 pub fn discover_browser_profiles(browser: &Browser) -> Vec<BrowserProfile> {
@@ -36,13 +35,10 @@ fn discover_profiles_in_home(home: &Path, browser: &Browser) -> Vec<BrowserProfi
                 }
                 Browser::Firefox => true,
             };
-            include.then_some(BrowserProfile {
-                label: name.clone(),
-                value: name,
-            })
+            include.then_some(BrowserProfile { name })
         })
         .collect::<Vec<_>>();
-    profiles.sort_by(|left, right| profile_rank(&left.label).cmp(&profile_rank(&right.label)));
+    profiles.sort_by(|left, right| profile_rank(&left.name).cmp(&profile_rank(&right.name)));
     profiles
 }
 
@@ -84,7 +80,7 @@ mod tests {
         assert_eq!(
             profiles
                 .iter()
-                .map(|profile| profile.label.as_str())
+                .map(|profile| profile.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["Default", "Profile 2"]
         );

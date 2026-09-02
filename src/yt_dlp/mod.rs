@@ -197,7 +197,6 @@ pub fn parse_probe_json(input: &str) -> Result<MediaMetadata, ProbeParseError> {
         .flatten()
         .filter_map(|format| format.get("height").and_then(Value::as_u64))
         .collect();
-    let supports_2160p = heights.iter().any(|height| *height >= 2160);
     let mut available_qualities = vec![Quality::Best];
     for (quality, minimum, maximum) in [
         (Quality::P2160, 2160, u64::MAX),
@@ -225,7 +224,6 @@ pub fn parse_probe_json(input: &str) -> Result<MediaMetadata, ProbeParseError> {
             .map(str::to_owned),
         subtitles: parse_subtitles(&value),
         available_qualities,
-        supports_2160p,
     })
 }
 
@@ -277,7 +275,7 @@ pub fn parse_progress_line(line: &str) -> Option<JobProgress> {
         estimated_total_bytes: parse_optional(fields.next()?),
         speed_bytes_per_second: parse_optional(fields.next()?),
         eta_seconds: parse_optional(fields.next()?),
-        status: optional_text(fields.next()?),
+        status: parse_optional(fields.next()?),
     })
 }
 
@@ -292,14 +290,6 @@ fn parse_optional<T: std::str::FromStr>(value: &str) -> Option<T> {
         None
     } else {
         value.parse().ok()
-    }
-}
-
-fn optional_text(value: &str) -> Option<String> {
-    if value.is_empty() || value.eq_ignore_ascii_case("NA") || value.eq_ignore_ascii_case("N/A") {
-        None
-    } else {
-        Some(value.to_owned())
     }
 }
 
@@ -403,12 +393,10 @@ mod tests {
         );
         for command in [probe, download] {
             assert!(command.args.iter().any(|arg| arg == "--no-playlist"));
-            assert!(
-                command
-                    .args
-                    .windows(2)
-                    .any(|args| args == ["--cookies", "cookies.txt"])
-            );
+            assert!(command
+                .args
+                .windows(2)
+                .any(|args| args == ["--cookies", "cookies.txt"]));
         }
     }
 
@@ -442,12 +430,10 @@ mod tests {
             1
         );
         for command in commands {
-            assert!(
-                command
-                    .args
-                    .windows(2)
-                    .any(|args| args == ["--cookies", jar.to_str().unwrap()])
-            );
+            assert!(command
+                .args
+                .windows(2)
+                .any(|args| args == ["--cookies", jar.to_str().unwrap()]));
         }
     }
 
@@ -471,7 +457,6 @@ mod tests {
             r#"{"id":"abc","title":"Title","formats":[{"height":1080},{"height":2160}]}"#,
         )
         .unwrap();
-        assert!(metadata.supports_2160p);
         assert!(metadata.available_qualities.contains(&Quality::P2160));
     }
 
@@ -492,12 +477,10 @@ mod tests {
                 "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
             ]
         }));
-        assert!(
-            command
-                .args
-                .windows(2)
-                .any(|args| args == ["--remux-video", "mp4"])
-        );
+        assert!(command
+            .args
+            .windows(2)
+            .any(|args| args == ["--remux-video", "mp4"]));
     }
 
     #[test]
@@ -509,12 +492,10 @@ mod tests {
             &DownloadMode::Audio,
             None,
         );
-        assert!(
-            audio
-                .args
-                .windows(2)
-                .any(|args| args == ["--audio-format", "m4a"])
-        );
+        assert!(audio
+            .args
+            .windows(2)
+            .any(|args| args == ["--audio-format", "m4a"]));
         let subtitles = build_download_command(
             &YtDlpPaths::default(),
             "url",
@@ -525,24 +506,18 @@ mod tests {
             },
             None,
         );
-        assert!(
-            subtitles
-                .args
-                .windows(2)
-                .any(|args| args == ["--sub-langs", "en"])
-        );
-        assert!(
-            subtitles
-                .args
-                .windows(2)
-                .any(|args| args == ["--convert-subs", "srt"])
-        );
-        assert!(
-            subtitles
-                .args
-                .windows(2)
-                .any(|args| args == ["--sub-format", "srt/vtt/best"])
-        );
+        assert!(subtitles
+            .args
+            .windows(2)
+            .any(|args| args == ["--sub-langs", "en"]));
+        assert!(subtitles
+            .args
+            .windows(2)
+            .any(|args| args == ["--convert-subs", "srt"]));
+        assert!(subtitles
+            .args
+            .windows(2)
+            .any(|args| args == ["--sub-format", "srt/vtt/best"]));
         assert!(!subtitles.args.iter().any(|arg| arg == "--write-auto-subs"));
     }
 

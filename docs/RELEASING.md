@@ -1,8 +1,8 @@
 # Releasing FetchDeck
 
-The release workflow builds and tests native Apple Silicon and Intel binaries,
-publishes both archives and their SHA-256 files, tests the generated Homebrew
-formula on both architectures, and updates `softmaxe/homebrew-tap`.
+The release workflow builds and tests the native Apple Silicon binary,
+publishes its archive and SHA-256 file, tests the generated Homebrew formula,
+and updates `softmaxe/homebrew-tap`.
 
 Before the first release, add a fine-grained personal access token as the
 `HOMEBREW_TAP_TOKEN` Actions secret. Limit repository access to
