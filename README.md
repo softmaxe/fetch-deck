@@ -17,9 +17,15 @@
 
 FetchDeck turns a single video URL into a guided download. Paste the URL, choose an output, review the job, and follow its progress without writing `yt-dlp` commands.
 
+## Requirements
+
+FetchDeck runs on macOS. The published Homebrew formula and release binary target Apple Silicon (`arm64`). The release workflow does not publish builds for other architectures.
+
+FetchDeck uses the external commands `yt-dlp` and `ffmpeg`; it does not bundle them.
+
 ## Quick start
 
-FetchDeck requires macOS and [Homebrew](https://brew.sh/).
+Install FetchDeck and its runtime dependencies with [Homebrew](https://brew.sh/):
 
 ```sh
 brew tap softmaxe/tap
@@ -27,7 +33,7 @@ brew install fetchdeck
 fetchdeck
 ```
 
-Homebrew installs `yt-dlp` and `ffmpeg` with FetchDeck.
+The formula installs `yt-dlp` and `ffmpeg` as dependencies.
 
 ## What it does
 
@@ -55,7 +61,7 @@ It accepts one video URL at a time. Playlist and channel URLs are not supported.
 
 ## Run from source
 
-You need macOS, stable Rust with `cargo` on `PATH`, `yt-dlp`, and `ffmpeg`.
+You need macOS, stable Rust with `cargo` on `PATH`, and the `yt-dlp` and `ffmpeg` commands.
 
 ```sh
 brew install yt-dlp ffmpeg
@@ -71,7 +77,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-FetchDeck reports missing tools in its header. You can set custom paths for `yt-dlp` and `ffmpeg` in Settings.
+FetchDeck reports detected tool versions, or `missing`, in its header. You can set custom executable paths for `yt-dlp` and `ffmpeg` in Settings.
 
 ## Controls
 
@@ -97,7 +103,7 @@ FetchDeck asks before reading browser cookies. On the first successful probe, th
 
 Logs and errors hide the cookie file path and browser authentication details. Settings and history never store the selected browser, profile, cookie file, or generated command. FetchDeck sends no telemetry.
 
-Settings store the output directory and optional paths to `yt-dlp` and `ffmpeg`. History stores the URL, title, result, output path, and timestamp for up to 100 jobs. Clearing History does not delete downloaded files. macOS stores both files in the standard application directories for `com.softmaxe.fetchdeck`.
+Settings store the output directory and optional executable paths for `yt-dlp` and `ffmpeg`. History stores the URL, title, result, output path, and timestamp for up to 100 jobs. Clearing History does not delete downloaded files. macOS stores both files in the standard application directories for `com.softmaxe.fetchdeck`.
 
 Some browsers lock their cookie database while open. Close the selected browser and retry if FetchDeck cannot read it.
 
@@ -108,7 +114,7 @@ Some browsers lock their cookie database while open. Close the selected browser 
 - No embedded or automatically generated subtitles
 - No pause, background downloads, or automatic resume across app sessions
 - No Safari or Edge cookies, or `cookies.txt` import
-- `yt-dlp` and `ffmpeg` are not bundled or updated by FetchDeck
+- `yt-dlp` and `ffmpeg` are not bundled or updated by FetchDeck; keep them installed and update them separately
 
 ## Rebuild the demo
 

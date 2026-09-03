@@ -17,9 +17,15 @@
 
 FetchDeck 用清晰的步骤处理单个视频 URL。粘贴链接、选择输出、确认任务并查看进度，不用自己编写 `yt-dlp` 命令。
 
+## 环境要求
+
+FetchDeck 运行于 macOS。Homebrew formula 和发布的二进制文件仅面向 Apple Silicon（`arm64`）。发布流程不提供其他架构的预构建文件。
+
+FetchDeck 依赖外部命令 `yt-dlp` 和 `ffmpeg`，不会将它们打包进应用。
+
 ## 快速开始
 
-FetchDeck 需要 macOS 和 [Homebrew](https://brew.sh/)。
+使用 [Homebrew](https://brew.sh/) 安装 FetchDeck 及其运行依赖：
 
 ```sh
 brew tap softmaxe/tap
@@ -27,7 +33,7 @@ brew install fetchdeck
 fetchdeck
 ```
 
-Homebrew 会同时安装 FetchDeck 所需的 `yt-dlp` 和 `ffmpeg`。
+该 formula 会将 `yt-dlp` 和 `ffmpeg` 作为依赖一并安装。
 
 ## 支持的功能
 
@@ -55,7 +61,7 @@ FetchDeck 还可以：
 
 ## 从源码运行
 
-需要 macOS、位于 `PATH` 中的稳定版 Rust 和 `cargo`，以及 `yt-dlp`、`ffmpeg`。
+需要 macOS、位于 `PATH` 中的稳定版 Rust 和 `cargo`，以及可执行的 `yt-dlp`、`ffmpeg` 命令。
 
 ```sh
 brew install yt-dlp ffmpeg
@@ -71,7 +77,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-如果缺少依赖，FetchDeck 会在界面顶部提示。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的路径。
+FetchDeck 会在界面顶部显示依赖版本；找不到时显示 `missing`。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的可执行文件路径。
 
 ## 操作方式
 
@@ -97,7 +103,7 @@ FetchDeck 会先征得同意，再读取浏览器 cookie。第一次成功读取
 
 日志和错误信息会隐藏 cookie 文件路径及浏览器认证详情。设置和历史记录不会保存所选浏览器、配置、cookie 文件或生成的命令。FetchDeck 不发送遥测数据。
 
-Settings 保存输出目录以及可选的 `yt-dlp`、`ffmpeg` 路径。History 最多保存 100 个任务的 URL、标题、结果、输出路径和时间戳。清空 History 不会删除下载文件。macOS 会将两个文件保存在 `com.softmaxe.fetchdeck` 的标准应用目录中。
+Settings 保存输出目录以及可选的 `yt-dlp`、`ffmpeg` 可执行文件路径。History 最多保存 100 个任务的 URL、标题、结果、输出路径和时间戳。清空 History 不会删除下载文件。macOS 会将两个文件保存在 `com.softmaxe.fetchdeck` 的标准应用目录中。
 
 部分浏览器会在运行时锁定 cookie 数据库。如果 FetchDeck 无法读取，请关闭所选浏览器后重试。
 
@@ -108,7 +114,7 @@ Settings 保存输出目录以及可选的 `yt-dlp`、`ffmpeg` 路径。History 
 - 不支持内嵌字幕和自动生成字幕
 - 不支持暂停、后台下载和跨应用会话自动续传
 - 不支持 Safari、Edge cookie 和 `cookies.txt` 导入
-- FetchDeck 不内置或自动更新 `yt-dlp` 和 `ffmpeg`
+- FetchDeck 不内置或自动更新 `yt-dlp` 和 `ffmpeg`；请自行安装并分别更新它们
 
 ## 重新生成演示动图
 
