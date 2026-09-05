@@ -206,17 +206,11 @@ pub fn draw(frame: &mut Frame, model: &UiModel) {
         area,
     );
 
-    let layout = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(4),
-        Constraint::Min(8),
-        Constraint::Length(4),
-    ])
-    .split(area);
+    let layout = top_level_layout().split(area);
 
     draw_header(frame, layout[0], model);
     draw_steps(frame, layout[1], model.screen);
-    let card = card_rect(area, model);
+    let card = card_rect_in_content(layout[2], model);
     match model.overlay {
         Some(Overlay::History) => draw_history(frame, card, model),
         Some(Overlay::Settings) => draw_settings(frame, card, model),
@@ -226,15 +220,21 @@ pub fn draw(frame: &mut Frame, model: &UiModel) {
     draw_footer(frame, layout[3], model);
 }
 
-fn card_rect(area: Rect, model: &UiModel) -> Rect {
-    let layout = Layout::vertical([
+fn top_level_layout() -> Layout {
+    Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(4),
         Constraint::Min(8),
         Constraint::Length(4),
     ])
-    .split(area);
-    compact_card(centered_card(layout[2]), model)
+}
+
+fn card_rect(area: Rect, model: &UiModel) -> Rect {
+    card_rect_in_content(top_level_layout().split(area)[2], model)
+}
+
+fn card_rect_in_content(content_area: Rect, model: &UiModel) -> Rect {
+    compact_card(centered_card(content_area), model)
 }
 
 #[cfg(test)]
