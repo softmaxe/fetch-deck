@@ -48,6 +48,7 @@ FetchDeck can also:
 - Read cookies from local Chrome, Firefox, or Brave profiles after asking for confirmation.
 - Show progress, speed, ETA, status, and recent `yt-dlp` output.
 - Cancel and retry downloads while keeping partial files available to `yt-dlp`.
+- Download fragmented sources in parallel and prefer formats that merge without re-encoding.
 - Save settings and the latest 100 jobs locally.
 
 It accepts one video URL at a time. Playlist and channel URLs are not supported.
