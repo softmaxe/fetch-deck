@@ -10,6 +10,8 @@ use thiserror::Error;
 
 pub const PROGRESS_PREFIX: &str = "FETCHDECK_PROGRESS:";
 pub const OUTPUT_PREFIX: &str = "FETCHDECK_OUTPUT:";
+/// Parallel fragment downloads for DASH and HLS sources.
+const CONCURRENT_FRAGMENTS: u8 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -94,6 +96,9 @@ pub fn build_download_command(
         "--no-overwrites".to_owned(),
         "--continue".to_owned(),
         "--part".to_owned(),
+        // Fragmented (DASH and HLS) sources download several fragments at once.
+        "--concurrent-fragments".to_owned(),
+        CONCURRENT_FRAGMENTS.to_string(),
         "--newline".to_owned(),
         "--progress".to_owned(),
         "--progress-template".to_owned(),
@@ -118,6 +123,10 @@ pub fn build_download_command(
             args.extend([
                 "--format".to_owned(),
                 video_format_selector(*quality),
+                // Among formats of the same resolution, prefer the ones that merge
+                // into MP4 by stream copy instead of being re-encoded.
+                "--format-sort".to_owned(),
+                "res,ext:mp4:m4a".to_owned(),
                 "--merge-output-format".to_owned(),
                 "mp4".to_owned(),
                 "--remux-video".to_owned(),
@@ -126,6 +135,9 @@ pub fn build_download_command(
         }
         DownloadMode::Audio => {
             args.extend([
+                // An M4A source is extracted by stream copy; other codecs are re-encoded.
+                "--format".to_owned(),
+                "bestaudio[ext=m4a]/bestaudio/best".to_owned(),
                 "--extract-audio".to_owned(),
                 "--audio-format".to_owned(),
                 "m4a".to_owned(),
@@ -452,6 +464,26 @@ mod tests {
     }
 
     #[test]
+    fn download_command_asks_for_parallel_fragments_and_copyable_formats() {
+        let command = build_download_command(
+            &YtDlpPaths::default(),
+            "url",
+            Path::new("downloads"),
+            &DownloadMode::default(),
+            None,
+        );
+
+        assert!(command
+            .args
+            .windows(2)
+            .any(|args| args == ["--concurrent-fragments", "4"]));
+        assert!(command
+            .args
+            .windows(2)
+            .any(|args| args == ["--format-sort", "res,ext:mp4:m4a"]));
+    }
+
+    #[test]
     fn probe_detects_2160p() {
         let metadata = parse_probe_json(
             r#"{"id":"abc","title":"Title","formats":[{"height":1080},{"height":2160}]}"#,
@@ -496,6 +528,11 @@ mod tests {
             .args
             .windows(2)
             .any(|args| args == ["--audio-format", "m4a"]));
+        // An M4A source keeps the download free of an audio re-encode.
+        assert!(audio
+            .args
+            .windows(2)
+            .any(|args| args == ["--format", "bestaudio[ext=m4a]/bestaudio/best"]));
         let subtitles = build_download_command(
             &YtDlpPaths::default(),
             "url",

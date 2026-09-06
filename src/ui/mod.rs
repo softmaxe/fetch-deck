@@ -1,9 +1,11 @@
+use std::borrow::Cow;
+
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Wrap},
-    Frame,
 };
 
 use crate::{domain::JobStatus, theme};
@@ -82,7 +84,7 @@ fn navigation_actions() -> Vec<(&'static str, HoverTarget)> {
     ]
 }
 
-fn overlay_actions(model: &UiModel) -> Vec<(&'static str, HoverTarget)> {
+fn overlay_actions(model: &UiModel<'_>) -> Vec<(&'static str, HoverTarget)> {
     match model.overlay {
         Some(Overlay::History) => vec![
             ("x Clear history", HoverTarget::HistoryClear),
@@ -102,7 +104,7 @@ fn overlay_actions(model: &UiModel) -> Vec<(&'static str, HoverTarget)> {
     }
 }
 
-fn screen_actions(model: &UiModel) -> Vec<(&'static str, HoverTarget)> {
+fn screen_actions(model: &UiModel<'_>) -> Vec<(&'static str, HoverTarget)> {
     match model.screen {
         Screen::Source => vec![("Enter Continue", HoverTarget::SourceContinue)],
         Screen::Probe => vec![("Esc Stop reading", HoverTarget::ProbeCancel)],
@@ -131,75 +133,75 @@ fn screen_actions(model: &UiModel) -> Vec<(&'static str, HoverTarget)> {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DependencySummary {
-    pub yt_dlp: String,
-    pub ffmpeg: String,
+pub struct DependencySummary<'a> {
+    pub yt_dlp: Cow<'a, str>,
+    pub ffmpeg: Cow<'a, str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct JobDetails {
-    pub title: String,
-    pub source: String,
-    pub format: String,
-    pub output: String,
+pub struct JobDetails<'a> {
+    pub title: Cow<'a, str>,
+    pub source: Cow<'a, str>,
+    pub format: Cow<'a, str>,
+    pub output: Cow<'a, str>,
     pub status: JobStatus,
     pub progress_percent: u16,
-    pub downloaded: String,
-    pub total: String,
-    pub speed: String,
-    pub eta: String,
-    pub log_lines: Vec<String>,
+    pub downloaded: Cow<'a, str>,
+    pub total: Cow<'a, str>,
+    pub speed: Cow<'a, str>,
+    pub eta: Cow<'a, str>,
+    pub log_lines: Vec<Cow<'a, str>>,
     pub log_offset: u16,
-    pub error: Option<String>,
+    pub error: Option<Cow<'a, str>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct WorkflowView {
+pub struct WorkflowView<'a> {
     pub focused_field: usize,
-    pub source: String,
-    pub authentication: String,
-    pub profile: String,
-    pub probe_summary: Vec<String>,
-    pub mode: String,
-    pub quality: String,
-    pub subtitle: String,
-    pub output: String,
-    pub review_lines: Vec<String>,
+    pub source: Cow<'a, str>,
+    pub authentication: Cow<'a, str>,
+    pub profile: Cow<'a, str>,
+    pub probe_summary: Vec<Cow<'a, str>>,
+    pub mode: Cow<'a, str>,
+    pub quality: Cow<'a, str>,
+    pub subtitle: Cow<'a, str>,
+    pub output: Cow<'a, str>,
+    pub review_lines: Vec<Cow<'a, str>>,
     pub review_scroll: u16,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct HistoryRow {
-    pub title: String,
-    pub result: String,
-    pub finished_at: String,
-    pub output: String,
+pub struct HistoryRow<'a> {
+    pub title: Cow<'a, str>,
+    pub result: Cow<'a, str>,
+    pub finished_at: Cow<'a, str>,
+    pub output: Cow<'a, str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SettingField {
-    pub name: String,
-    pub value: String,
-    pub hint: String,
+pub struct SettingField<'a> {
+    pub name: Cow<'a, str>,
+    pub value: Cow<'a, str>,
+    pub hint: Cow<'a, str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct UiModel {
+pub struct UiModel<'a> {
     pub screen: Screen,
     pub overlay: Option<Overlay>,
-    pub dependencies: DependencySummary,
-    pub current_job: Option<JobDetails>,
-    pub workflow: WorkflowView,
-    pub history_rows: Vec<HistoryRow>,
-    pub settings_fields: Vec<SettingField>,
+    pub dependencies: DependencySummary<'a>,
+    pub current_job: Option<JobDetails<'a>>,
+    pub workflow: WorkflowView<'a>,
+    pub history_rows: Vec<HistoryRow<'a>>,
+    pub settings_fields: Vec<SettingField<'a>>,
     pub selected_setting: usize,
     pub settings_editing: bool,
     pub cookie_notice_pending: bool,
     pub hover_target: Option<HoverTarget>,
-    pub status_message: Option<String>,
+    pub status_message: Option<Cow<'a, str>>,
 }
 
-pub fn draw(frame: &mut Frame, model: &UiModel) {
+pub fn draw(frame: &mut Frame, model: &UiModel<'_>) {
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(theme::BACKGROUND)),
@@ -229,20 +231,20 @@ fn top_level_layout() -> Layout {
     ])
 }
 
-fn card_rect(area: Rect, model: &UiModel) -> Rect {
+fn card_rect(area: Rect, model: &UiModel<'_>) -> Rect {
     card_rect_in_content(top_level_layout().split(area)[2], model)
 }
 
-fn card_rect_in_content(content_area: Rect, model: &UiModel) -> Rect {
+fn card_rect_in_content(content_area: Rect, model: &UiModel<'_>) -> Rect {
     compact_card(centered_card(content_area), model)
 }
 
 #[cfg(test)]
-pub(crate) fn card_rect_for_test(area: Rect, model: &UiModel) -> Rect {
+pub(crate) fn card_rect_for_test(area: Rect, model: &UiModel<'_>) -> Rect {
     card_rect(area, model)
 }
 
-pub fn hit_test(area: Rect, model: &UiModel, column: u16, row: u16) -> Option<HoverTarget> {
+pub fn hit_test(area: Rect, model: &UiModel<'_>, column: u16, row: u16) -> Option<HoverTarget> {
     let card = card_rect(area, model);
     let inner_x = card.x.saturating_add(1);
     let inner_width = card.width.saturating_sub(2);
@@ -357,7 +359,7 @@ fn centered_card(area: Rect) -> Rect {
     .split(area)[1]
 }
 
-fn compact_card(area: Rect, model: &UiModel) -> Rect {
+fn compact_card(area: Rect, model: &UiModel<'_>) -> Rect {
     let requested_height = match model.overlay {
         Some(Overlay::History) => 18,
         Some(Overlay::Settings) => model
@@ -392,7 +394,7 @@ fn compact_card(area: Rect, model: &UiModel) -> Rect {
     .split(area)[1]
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_header(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let line = Line::from(vec![
         Span::styled(
             " FetchDeck ",
@@ -472,7 +474,7 @@ fn draw_steps(frame: &mut Frame, area: Rect, screen: Screen) {
     }
 }
 
-fn draw_screen(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_screen(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     match model.screen {
         Screen::Source | Screen::Probe => draw_source(frame, area, model),
         Screen::Options => draw_options(frame, area, &model.workflow, model.hover_target),
@@ -482,7 +484,7 @@ fn draw_screen(frame: &mut Frame, area: Rect, model: &UiModel) {
     }
 }
 
-fn draw_source(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_source(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let source = &model.workflow;
     let mut lines = vec![
         field_line_with_focus(
@@ -506,12 +508,12 @@ fn draw_source(frame: &mut Frame, area: Rect, model: &UiModel) {
     ];
     if model.screen == Screen::Probe {
         lines.push(Line::from(""));
-        lines.extend(
-            source
-                .probe_summary
-                .iter()
-                .map(|line| Line::from(Span::styled(line, Style::default().fg(theme::WORKING)))),
-        );
+        lines.extend(source.probe_summary.iter().map(|line| {
+            Line::from(Span::styled(
+                line.as_ref(),
+                Style::default().fg(theme::WORKING),
+            ))
+        }));
     }
     frame.render_widget(
         Paragraph::new(lines).block(theme::panel(
@@ -529,7 +531,7 @@ fn draw_source(frame: &mut Frame, area: Rect, model: &UiModel) {
 fn draw_options(
     frame: &mut Frame,
     area: Rect,
-    workflow: &WorkflowView,
+    workflow: &WorkflowView<'_>,
     hover: Option<HoverTarget>,
 ) {
     let lines = vec![
@@ -566,7 +568,7 @@ fn draw_options(
     );
 }
 
-fn draw_review(frame: &mut Frame, area: Rect, workflow: &WorkflowView) {
+fn draw_review(frame: &mut Frame, area: Rect, workflow: &WorkflowView<'_>) {
     let mut lines = vec![
         field_line("Source", &workflow.source),
         field_line("Cookies", &workflow.authentication),
@@ -580,7 +582,7 @@ fn draw_review(frame: &mut Frame, area: Rect, workflow: &WorkflowView) {
         workflow
             .review_lines
             .iter()
-            .map(|line| Line::from(line.as_str())),
+            .map(|line| Line::from(line.as_ref())),
     );
     frame.render_widget(
         Paragraph::new(lines)
@@ -591,7 +593,7 @@ fn draw_review(frame: &mut Frame, area: Rect, workflow: &WorkflowView) {
     );
 }
 
-fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
+fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
     let Some(job) = job else {
         frame.render_widget(
             Paragraph::new("Preparing download...")
@@ -639,7 +641,7 @@ fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
     let logs = job
         .log_lines
         .iter()
-        .map(|line| Line::from(line.as_str()))
+        .map(|line| Line::from(line.as_ref()))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(logs)
@@ -651,7 +653,7 @@ fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
     );
 }
 
-fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
+fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
     let Some(job) = job else {
         frame.render_widget(
             Paragraph::new("No completed download")
@@ -686,7 +688,7 @@ fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
     ];
     if let Some(error) = &job.error {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(error, status_style)));
+        lines.push(Line::from(Span::styled(error.as_ref(), status_style)));
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -696,13 +698,13 @@ fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails>) {
     );
 }
 
-fn draw_history(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_history(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let rows = model.history_rows.iter().map(|item| {
         Row::new([
-            Cell::from(item.title.as_str()),
-            Cell::from(item.result.as_str()),
-            Cell::from(item.finished_at.as_str()),
-            Cell::from(item.output.as_str()),
+            Cell::from(item.title.as_ref()),
+            Cell::from(item.result.as_ref()),
+            Cell::from(item.finished_at.as_ref()),
+            Cell::from(item.output.as_ref()),
         ])
     });
     frame.render_widget(
@@ -727,7 +729,7 @@ fn draw_history(frame: &mut Frame, area: Rect, model: &UiModel) {
     );
 }
 
-fn draw_settings(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_settings(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let items = model
         .settings_fields
         .iter()
@@ -746,9 +748,9 @@ fn draw_settings(frame: &mut Frame, area: Rect, model: &UiModel) {
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(format!("{:<18}", field.name), Modifier::BOLD),
-                    Span::raw(&field.value),
+                    Span::raw(field.value.as_ref()),
                 ]),
-                Line::from(Span::styled(field.hint.as_str(), theme::muted())),
+                Line::from(Span::styled(field.hint.as_ref(), theme::muted())),
             ])
             .style(style)
         });
@@ -782,7 +784,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel) {
+fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let status = model.status_message.as_deref().unwrap_or("Ready");
     let actions = if model.cookie_notice_pending {
         cookie_actions()
@@ -881,12 +883,14 @@ fn field_line_with_focus<'a>(
 }
 
 fn field_line_width(name: &str, value: &str) -> u16 {
-    field_line_with_focus(name, value, false, false).width() as u16
+    // Mirrors the layout of `field_line_with_focus` without building the line.
+    let name_width = Span::raw(name).width().max(9);
+    (2 + name_width + Span::raw(value).width()) as u16
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
 
@@ -907,7 +911,7 @@ mod tests {
             .join("\n")
     }
 
-    fn model_for(screen: Screen) -> UiModel {
+    fn model_for(screen: Screen) -> UiModel<'static> {
         UiModel {
             screen,
             dependencies: DependencySummary {
@@ -1026,9 +1030,9 @@ mod tests {
         let long = "x".repeat(20_000);
         for screen in [Screen::Source, Screen::Progress] {
             let mut model = model_for(screen);
-            model.workflow.source = format!("https://example.com/{long}");
+            model.workflow.source = format!("https://example.com/{long}").into();
             if let Some(job) = model.current_job.as_mut() {
-                job.log_lines = vec![long.clone()];
+                job.log_lines = vec![long.clone().into()];
                 job.log_offset = u16::MAX;
             }
             let output = render(&model);
@@ -1040,7 +1044,7 @@ mod tests {
     #[test]
     fn long_source_url_does_not_move_cookie_and_profile_rows() {
         let mut model = model_for(Screen::Source);
-        model.workflow.source = format!("https://example.com/{}", "x".repeat(200));
+        model.workflow.source = format!("https://example.com/{}", "x".repeat(200)).into();
         let area = Rect::new(0, 0, 80, 24);
         let card = card_rect(area, &model);
         let backend = TestBackend::new(area.width, area.height);
@@ -1069,7 +1073,9 @@ mod tests {
     #[test]
     fn review_content_can_scroll_without_replacing_the_action_row() {
         let mut model = model_for(Screen::Review);
-        model.workflow.review_lines = (0..40).map(|index| format!("Detail {index:02}")).collect();
+        model.workflow.review_lines = (0..40)
+            .map(|index| format!("Detail {index:02}").into())
+            .collect();
         model.workflow.review_scroll = 36;
 
         let output = render(&model);

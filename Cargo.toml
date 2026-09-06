@@ -1,6 +1,6 @@
 [package]
 name = "fetchdeck"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2024"
 description = "A friendly terminal interface for yt-dlp"
 license = "AGPL-3.0-only"
@@ -19,3 +19,9 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "process", "io-util", "sync", "time", "signal"] }
 toml = "1.1.4"
 url = "2.5.8"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

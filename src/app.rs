@@ -1,16 +1,18 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use tokio::sync::mpsc;
 use url::Url;
 
 use crate::{
@@ -18,6 +20,7 @@ use crate::{
         AppConfig, Authentication, Browser, DownloadJob, DownloadMode, HistoryEntry, JobProgress,
         JobStatus, MediaMetadata, Quality, SubtitleFormat,
     },
+    input,
     platform::{BrowserProfile, discover_browser_profiles, open_in_finder},
     runtime::{self, RuntimeCommand, RuntimeEvent, RuntimeHandle},
     storage::{ConfigStore, HistoryStore},
@@ -34,6 +37,11 @@ use crate::{
 const HISTORY_LIMIT: usize = 100;
 const MAX_LOG_LINES: usize = 300;
 const NETSCAPE_COOKIE_HEADER: &str = "# Netscape HTTP Cookie File\n";
+/// Shortest gap between two progress frames; a burst of yt-dlp output redraws
+/// once. Input redraws immediately instead of waiting for this.
+const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+const DEPENDENCY_MISSING: &str = "missing";
+const DEPENDENCY_CHECKING: &str = "checking";
 
 pub struct App {
     screen: Screen,
@@ -44,6 +52,8 @@ pub struct App {
     history: Vec<HistoryEntry>,
     dependencies: Dependencies,
     runtime: RuntimeHandle,
+    dependency_versions: mpsc::UnboundedReceiver<DependencyVersions>,
+    home_directory: Option<String>,
     jobs: Vec<DownloadJob>,
     logs: HashMap<String, VecDeque<String>>,
     log_offsets: HashMap<String, u16>,
@@ -109,6 +119,13 @@ struct Dependencies {
     ffmpeg_summary: String,
 }
 
+/// Version strings resolved off the startup path; `yt-dlp --version` alone
+/// costs a few hundred milliseconds because it starts a Python interpreter.
+struct DependencyVersions {
+    yt_dlp: String,
+    ffmpeg: String,
+}
+
 struct AddForm {
     source_focus: usize,
     option_focus: usize,
@@ -167,23 +184,23 @@ impl AddForm {
             .unwrap_or(Authentication::None)
     }
 
-    fn authentication_label(&self) -> String {
+    fn authentication_label(&self) -> &'static str {
         match self.selected_browser() {
-            None => "None".to_owned(),
-            Some(Browser::Chrome) => "Chrome cookies".to_owned(),
-            Some(Browser::Firefox) => "Firefox cookies".to_owned(),
-            Some(Browser::Brave) => "Brave cookies".to_owned(),
+            None => "None",
+            Some(Browser::Chrome) => "Chrome cookies",
+            Some(Browser::Firefox) => "Firefox cookies",
+            Some(Browser::Brave) => "Brave cookies",
         }
     }
 
-    fn profile_label(&self) -> String {
+    fn profile_label(&self) -> &str {
         if self.selected_browser().is_none() {
-            "Not used".to_owned()
+            "Not used"
         } else {
             self.profiles
                 .get(self.profile_index)
-                .map(|profile| profile.name.clone())
-                .unwrap_or_else(|| "Default profile".to_owned())
+                .map(|profile| profile.name.as_str())
+                .unwrap_or("Default profile")
         }
     }
 
@@ -195,12 +212,13 @@ impl AddForm {
         self.profile_index = 0;
     }
 
-    fn qualities(&self) -> Vec<Quality> {
+    fn qualities(&self) -> &[Quality] {
+        const DEFAULT: &[Quality] = &[Quality::Best];
         self.metadata
             .as_ref()
-            .map(|metadata| metadata.available_qualities.clone())
+            .map(|metadata| metadata.available_qualities.as_slice())
             .filter(|qualities| !qualities.is_empty())
-            .unwrap_or_else(|| vec![Quality::Best])
+            .unwrap_or(DEFAULT)
     }
 
     fn selected_quality(&self) -> Quality {
@@ -241,16 +259,16 @@ impl AddForm {
         }
     }
 
-    fn quality_label(&self) -> String {
+    fn quality_label(&self) -> &'static str {
         if self.mode_index != 0 {
-            return "Not used".to_owned();
+            return "Not used";
         }
-        quality_label(self.selected_quality()).to_owned()
+        quality_label(self.selected_quality())
     }
 
-    fn subtitle_label(&self) -> String {
+    fn subtitle_label(&self) -> Cow<'_, str> {
         if self.mode_index != 2 {
-            return "Not used".to_owned();
+            return Cow::Borrowed("Not used");
         }
         let language = self
             .metadata
@@ -263,7 +281,7 @@ impl AddForm {
         } else {
             "VTT"
         };
-        format!("{language} / {format}")
+        Cow::Owned(format!("{language} / {format}"))
     }
 
     fn output_focus(&self) -> usize {
@@ -312,6 +330,7 @@ impl App {
             ),
         };
         let dependencies = Dependencies::detect(&config);
+        let dependency_versions = spawn_version_probe(&dependencies);
         let settings_values = settings_values(&config);
         let output_directory = config.output_directory.clone();
 
@@ -324,6 +343,8 @@ impl App {
             history,
             dependencies,
             runtime: runtime::spawn(),
+            dependency_versions,
+            home_directory: home_directory(),
             jobs: Vec::new(),
             logs: HashMap::new(),
             log_offsets: HashMap::new(),
@@ -347,23 +368,87 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut Tui) -> Result<()> {
-        while !self.should_quit {
-            self.drain_runtime_events();
-            let model = self.ui_model();
-            terminal.draw(|frame| ui::draw(frame, &model))?;
+        let mut input = input::spawn_reader();
+        // The receiver moves out of the handle so runtime events can be awaited
+        // while `self` is borrowed mutably to handle them.
+        let mut runtime_events =
+            std::mem::replace(&mut self.runtime.events, mpsc::unbounded_channel().1);
+        let mut dirty = true;
+        // Set when the pending redraw answers the user, which never waits.
+        let mut immediate = true;
+        let mut next_frame = Instant::now();
 
-            if event::poll(Duration::from_millis(80))? {
-                match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
-                    Event::Paste(text) => self.handle_paste(&text),
-                    Event::Mouse(mouse) => {
-                        self.handle_mouse(mouse, terminal.size()?.into(), &model)
+        while !self.should_quit {
+            if dirty && (immediate || Instant::now() >= next_frame) {
+                let model = self.ui_model();
+                terminal.draw(|frame| ui::draw(frame, &model))?;
+                dirty = false;
+                immediate = false;
+                next_frame = Instant::now() + FRAME_INTERVAL;
+            }
+
+            // Unbiased selection keeps input responsive while yt-dlp floods events.
+            tokio::select! {
+                Some(event) = runtime_events.recv() => {
+                    self.handle_runtime_event(event);
+                    // Coalesce the burst of progress and log lines behind one frame.
+                    while let Ok(event) = runtime_events.try_recv() {
+                        self.handle_runtime_event(event);
                     }
-                    _ => {}
+                    dirty = true;
                 }
+                Some(event) = input.recv() => {
+                    let mut changed = self.handle_terminal_event(event, terminal)?;
+                    while let Ok(event) = input.try_recv() {
+                        changed |= self.handle_terminal_event(event, terminal)?;
+                    }
+                    dirty |= changed;
+                    immediate |= changed;
+                }
+                Some(versions) = self.dependency_versions.recv() => {
+                    self.dependencies.yt_dlp_summary = versions.yt_dlp;
+                    self.dependencies.ffmpeg_summary = versions.ffmpeg;
+                    dirty = true;
+                    immediate = true;
+                }
+                _ = tokio::time::sleep_until(next_frame.into()), if dirty => {}
+                else => break,
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn handle_mouse_at(&mut self, mouse: MouseEvent, area: Rect) -> bool {
+        let target = {
+            let model = self.ui_model();
+            ui::hit_test(area, &model, mouse.column, mouse.row)
+        };
+        self.handle_mouse(mouse, target)
+    }
+
+    /// Returns whether the event changed anything the next frame would show.
+    fn handle_terminal_event(&mut self, event: Event, terminal: &Tui) -> Result<bool> {
+        Ok(match event {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                self.handle_key(key);
+                true
+            }
+            Event::Paste(text) => {
+                self.handle_paste(&text);
+                true
+            }
+            Event::Resize(..) => true,
+            Event::Mouse(mouse) => {
+                let area: Rect = terminal.size()?.into();
+                let target = {
+                    let model = self.ui_model();
+                    ui::hit_test(area, &model, mouse.column, mouse.row)
+                };
+                self.handle_mouse(mouse, target)
+            }
+            _ => false,
+        })
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -787,13 +872,16 @@ impl App {
         });
     }
 
-    fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect, model: &UiModel) {
+    fn handle_mouse(&mut self, mouse: MouseEvent, target: Option<ui::HoverTarget>) -> bool {
         match mouse.kind {
             MouseEventKind::Moved => {
-                self.hover_target = ui::hit_test(area, model, mouse.column, mouse.row);
+                // Pointer motion only matters when it moves onto or off a control.
+                if self.hover_target == target {
+                    return false;
+                }
+                self.hover_target = target;
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                let target = ui::hit_test(area, model, mouse.column, mouse.row);
                 self.hover_target = target;
                 if let Some(target) = target {
                     self.activate_mouse_target(target);
@@ -817,8 +905,9 @@ impl App {
             MouseEventKind::ScrollUp if self.overlay.is_none() && self.screen == Screen::Review => {
                 self.review_scroll = self.review_scroll.saturating_sub(1)
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     fn activate_mouse_target(&mut self, target: ui::HoverTarget) {
@@ -1015,6 +1104,7 @@ impl App {
         self.config.yt_dlp_path = optional_path(&self.settings_values[1]);
         self.config.ffmpeg_path = optional_path(&self.settings_values[2]);
         self.dependencies = Dependencies::detect(&self.config);
+        self.dependency_versions = spawn_version_probe(&self.dependencies);
         self.save_config();
         self.settings_values = settings_values(&self.config);
         self.status_message = Some("Settings saved".into());
@@ -1023,12 +1113,6 @@ impl App {
     fn save_config(&mut self) {
         if let Err(error) = self.config_store.save(&self.config) {
             self.status_message = Some(format!("Config could not be saved: {error}"));
-        }
-    }
-
-    fn drain_runtime_events(&mut self) {
-        while let Ok(event) = self.runtime.events.try_recv() {
-            self.handle_runtime_event(event);
         }
     }
 
@@ -1193,11 +1277,10 @@ impl App {
     }
 
     fn sanitize_log(&self, job_id: &str, line: &str) -> String {
-        let mut sanitized = directories::UserDirs::new()
-            .map(|directories| {
-                line.replace(&directories.home_dir().to_string_lossy().into_owned(), "~")
-            })
-            .unwrap_or_else(|| line.to_owned());
+        let mut sanitized = match self.home_directory.as_deref() {
+            Some(home) if line.contains(home) => line.replace(home, "~"),
+            _ => line.to_owned(),
+        };
         if let Some(authentication) = self
             .jobs
             .iter()
@@ -1216,7 +1299,7 @@ impl App {
     fn record_history(&mut self, job: &DownloadJob) {
         self.history.push(HistoryEntry {
             url: job.url.clone(),
-            title: job_title(job),
+            title: job_title(job).to_owned(),
             status: job.status,
             output_path: job.output_path.clone(),
             timestamp_unix_seconds: unix_time(),
@@ -1229,58 +1312,63 @@ impl App {
         }
     }
 
-    fn ui_model(&self) -> UiModel {
-        let current_job =
-            if self.overlay.is_none() && matches!(self.screen, Screen::Progress | Screen::Done) {
-                self.jobs.get(self.selected_job).map(|job| {
-                    let progress = progress_percent(job);
-                    JobDetails {
-                        title: job_title(job),
-                        source: job.url.clone(),
-                        format: mode_label(&job.mode),
-                        output: job
-                            .output_path
-                            .as_ref()
-                            .unwrap_or(&job.output_directory)
-                            .to_string_lossy()
-                            .into_owned(),
-                        status: job.status,
-                        progress_percent: progress,
-                        downloaded: format_bytes(job.progress.downloaded_bytes),
-                        total: format_bytes(
-                            job.progress
-                                .total_bytes
-                                .or(job.progress.estimated_total_bytes),
-                        ),
-                        speed: job
-                            .progress
-                            .speed_bytes_per_second
-                            .map(|speed| format!("{}/s", format_bytes(Some(speed as u64))))
-                            .unwrap_or_else(|| "--".into()),
-                        eta: job
-                            .progress
-                            .eta_seconds
-                            .map(format_duration)
-                            .unwrap_or_else(|| "--".into()),
-                        log_lines: self
-                            .logs
-                            .get(&job.id)
-                            .map(|lines| lines.iter().cloned().collect())
-                            .unwrap_or_default(),
-                        log_offset: *self.log_offsets.get(&job.id).unwrap_or(&0),
-                        error: job.error.clone(),
-                    }
-                })
-            } else {
-                None
-            };
+    fn ui_model(&self) -> UiModel<'_> {
+        let current_job = if self.overlay.is_none()
+            && matches!(self.screen, Screen::Progress | Screen::Done)
+        {
+            self.jobs.get(self.selected_job).map(|job| {
+                let progress = progress_percent(job);
+                JobDetails {
+                    title: Cow::Borrowed(job_title(job)),
+                    source: Cow::Borrowed(job.url.as_str()),
+                    format: mode_label(&job.mode),
+                    output: job
+                        .output_path
+                        .as_ref()
+                        .unwrap_or(&job.output_directory)
+                        .to_string_lossy(),
+                    status: job.status,
+                    progress_percent: progress,
+                    downloaded: Cow::Owned(format_bytes(job.progress.downloaded_bytes)),
+                    total: Cow::Owned(format_bytes(
+                        job.progress
+                            .total_bytes
+                            .or(job.progress.estimated_total_bytes),
+                    )),
+                    speed: job
+                        .progress
+                        .speed_bytes_per_second
+                        .map(|speed| Cow::Owned(format!("{}/s", format_bytes(Some(speed as u64)))))
+                        .unwrap_or(Cow::Borrowed("--")),
+                    eta: job
+                        .progress
+                        .eta_seconds
+                        .map(|seconds| Cow::Owned(format_duration(seconds)))
+                        .unwrap_or(Cow::Borrowed("--")),
+                    log_lines: self
+                        .logs
+                        .get(&job.id)
+                        .map(|lines| {
+                            lines
+                                .iter()
+                                .map(|line| Cow::Borrowed(line.as_str()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    log_offset: self.log_offsets.get(&job.id).copied().unwrap_or(0),
+                    error: job.error.as_deref().map(Cow::Borrowed),
+                }
+            })
+        } else {
+            None
+        };
 
         UiModel {
             screen: self.screen,
             overlay: self.overlay,
             dependencies: DependencySummary {
-                yt_dlp: self.dependencies.yt_dlp_summary.clone(),
-                ffmpeg: self.dependencies.ffmpeg_summary.clone(),
+                yt_dlp: Cow::Borrowed(&self.dependencies.yt_dlp_summary),
+                ffmpeg: Cow::Borrowed(&self.dependencies.ffmpeg_summary),
             },
             current_job,
             workflow: self.workflow_view(),
@@ -1289,14 +1377,14 @@ impl App {
                     .iter()
                     .rev()
                     .map(|entry| HistoryRow {
-                        title: entry.title.clone(),
-                        result: entry.status.label().to_owned(),
-                        finished_at: relative_time(entry.timestamp_unix_seconds),
+                        title: Cow::Borrowed(entry.title.as_str()),
+                        result: Cow::Borrowed(entry.status.label()),
+                        finished_at: Cow::Owned(relative_time(entry.timestamp_unix_seconds)),
                         output: entry
                             .output_path
                             .as_ref()
-                            .map(|path| path.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "--".into()),
+                            .map(|path| path.to_string_lossy())
+                            .unwrap_or(Cow::Borrowed("--")),
                     })
                     .collect()
             } else {
@@ -1305,19 +1393,19 @@ impl App {
             settings_fields: if self.overlay == Some(Overlay::Settings) {
                 vec![
                     SettingField {
-                        name: "Output directory".into(),
-                        value: self.settings_values[0].clone(),
-                        hint: "Default folder for new jobs".into(),
+                        name: Cow::Borrowed("Output directory"),
+                        value: Cow::Borrowed(&self.settings_values[0]),
+                        hint: Cow::Borrowed("Default folder for new jobs"),
                     },
                     SettingField {
-                        name: "yt-dlp path".into(),
-                        value: self.settings_values[1].clone(),
-                        hint: self.dependencies.yt_dlp_summary.clone(),
+                        name: Cow::Borrowed("yt-dlp path"),
+                        value: Cow::Borrowed(&self.settings_values[1]),
+                        hint: Cow::Borrowed(&self.dependencies.yt_dlp_summary),
                     },
                     SettingField {
-                        name: "ffmpeg path".into(),
-                        value: self.settings_values[2].clone(),
-                        hint: self.dependencies.ffmpeg_summary.clone(),
+                        name: Cow::Borrowed("ffmpeg path"),
+                        value: Cow::Borrowed(&self.settings_values[2]),
+                        hint: Cow::Borrowed(&self.dependencies.ffmpeg_summary),
                     },
                 ]
             } else {
@@ -1327,36 +1415,36 @@ impl App {
             settings_editing: self.editing_setting,
             cookie_notice_pending: self.cookie_notice_pending,
             hover_target: self.hover_target,
-            status_message: self.status_message.clone(),
+            status_message: self.status_message.as_deref().map(Cow::Borrowed),
         }
     }
 
-    fn workflow_view(&self) -> WorkflowView {
+    fn workflow_view(&self) -> WorkflowView<'_> {
         let metadata = self.add.metadata.as_ref();
         let probe_summary = if self.screen == Screen::Probe {
             vec![
-                "Reading source metadata...".into(),
-                "Esc ignores this result".into(),
+                Cow::Borrowed("Reading source metadata..."),
+                Cow::Borrowed("Esc ignores this result"),
             ]
         } else {
             self.add
                 .probe_error
-                .as_ref()
-                .map(|error| vec![error.clone()])
+                .as_deref()
+                .map(|error| vec![Cow::Borrowed(error)])
                 .unwrap_or_default()
         };
         let mut review_lines = Vec::new();
         if let Some(metadata) = metadata {
-            review_lines.push(format!("Title     {}", metadata.title));
-            review_lines.push(format!(
+            review_lines.push(Cow::Owned(format!("Title     {}", metadata.title)));
+            review_lines.push(Cow::Owned(format!(
                 "Duration  {}",
                 metadata
                     .duration_seconds
                     .map(format_duration)
                     .unwrap_or_else(|| "Unknown".into())
-            ));
+            )));
             if metadata.available_qualities.contains(&Quality::P2160) {
-                review_lines.push("4K        Available".into());
+                review_lines.push(Cow::Borrowed("4K        Available"));
             }
         }
         WorkflowView {
@@ -1365,14 +1453,14 @@ impl App {
                 Screen::Options => self.add.option_display_focus(),
                 _ => 0,
             },
-            source: self.add.url.clone(),
-            authentication: self.add.authentication_label(),
-            profile: self.add.profile_label(),
+            source: Cow::Borrowed(self.add.url.as_str()),
+            authentication: Cow::Borrowed(self.add.authentication_label()),
+            profile: Cow::Borrowed(self.add.profile_label()),
             probe_summary,
-            mode: self.add.mode_label().into(),
-            quality: self.add.quality_label(),
+            mode: Cow::Borrowed(self.add.mode_label()),
+            quality: Cow::Borrowed(self.add.quality_label()),
             subtitle: self.add.subtitle_label(),
-            output: self.add.output.clone(),
+            output: Cow::Borrowed(self.add.output.as_str()),
             review_lines,
             review_scroll: self.review_scroll,
         }
@@ -1388,13 +1476,15 @@ impl Drop for App {
 }
 
 impl Dependencies {
+    /// Resolves the binaries with a few `stat` calls only; the version strings
+    /// arrive later through [`spawn_version_probe`].
     fn detect(config: &AppConfig) -> Self {
         let yt_dlp = configured_binary(config.yt_dlp_path.as_deref(), "yt-dlp");
         let ffmpeg = configured_binary(config.ffmpeg_path.as_deref(), "ffmpeg");
         let yt_dlp_ready = yt_dlp.is_some();
-        let yt_dlp_summary = binary_summary(yt_dlp.as_deref(), "--version", "missing");
-        let ffmpeg_summary = binary_summary(ffmpeg.as_deref(), "-version", "missing");
         Self {
+            yt_dlp_summary: pending_summary(yt_dlp_ready),
+            ffmpeg_summary: pending_summary(ffmpeg.is_some()),
             paths: YtDlpPaths {
                 yt_dlp: yt_dlp.unwrap_or_else(|| {
                     config
@@ -1405,10 +1495,33 @@ impl Dependencies {
                 ffmpeg,
             },
             yt_dlp_ready,
-            yt_dlp_summary,
-            ffmpeg_summary,
         }
     }
+}
+
+fn pending_summary(present: bool) -> String {
+    if present {
+        DEPENDENCY_CHECKING
+    } else {
+        DEPENDENCY_MISSING
+    }
+    .to_owned()
+}
+
+fn spawn_version_probe(dependencies: &Dependencies) -> mpsc::UnboundedReceiver<DependencyVersions> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let yt_dlp = dependencies
+        .yt_dlp_ready
+        .then(|| dependencies.paths.yt_dlp.clone());
+    let ffmpeg = dependencies.paths.ffmpeg.clone();
+    tokio::spawn(async move {
+        let (yt_dlp, ffmpeg) = tokio::join!(
+            binary_summary(yt_dlp, "--version"),
+            binary_summary(ffmpeg, "-version"),
+        );
+        let _ = sender.send(DependencyVersions { yt_dlp, ffmpeg });
+    });
+    receiver
 }
 
 fn configured_binary(configured: Option<&Path>, fallback: &str) -> Option<PathBuf> {
@@ -1417,13 +1530,15 @@ fn configured_binary(configured: Option<&Path>, fallback: &str) -> Option<PathBu
         .unwrap_or_else(|| detect_binary(fallback))
 }
 
-fn binary_summary(path: Option<&Path>, version_flag: &str, missing: &str) -> String {
+async fn binary_summary(path: Option<PathBuf>, version_flag: &str) -> String {
     let Some(path) = path else {
-        return missing.to_owned();
+        return DEPENDENCY_MISSING.to_owned();
     };
-    let version = std::process::Command::new(path)
+    let version = tokio::process::Command::new(path)
         .arg(version_flag)
+        .stdin(std::process::Stdio::null())
         .output()
+        .await
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
@@ -1498,7 +1613,11 @@ fn cycle(current: usize, count: usize, delta: isize) -> usize {
 }
 
 fn push_log(logs: &mut HashMap<String, VecDeque<String>>, job_id: &str, line: String) {
-    let lines = logs.entry(job_id.to_owned()).or_default();
+    // Avoids allocating the key again for every log line of a running job.
+    let lines = match logs.get_mut(job_id) {
+        Some(lines) => lines,
+        None => logs.entry(job_id.to_owned()).or_default(),
+    };
     if lines.len() == MAX_LOG_LINES {
         lines.pop_front();
     }
@@ -1541,12 +1660,14 @@ fn quality_label(quality: Quality) -> &'static str {
     }
 }
 
-fn mode_label(mode: &DownloadMode) -> String {
+fn mode_label(mode: &DownloadMode) -> Cow<'_, str> {
     match mode {
-        DownloadMode::Video { quality } => format!("Video / MP4 / {}", quality_label(*quality)),
-        DownloadMode::Audio => "Audio / M4A".into(),
+        DownloadMode::Video { quality } => {
+            Cow::Owned(format!("Video / MP4 / {}", quality_label(*quality)))
+        }
+        DownloadMode::Audio => Cow::Borrowed("Audio / M4A"),
         DownloadMode::Subtitles { language, format } => {
-            format!("Subtitles / {language} / {format:?}")
+            Cow::Owned(format!("Subtitles / {language} / {format:?}"))
         }
     }
 }
@@ -1567,11 +1688,11 @@ fn progress_percent(job: &DownloadJob) -> u16 {
     }
 }
 
-fn job_title(job: &DownloadJob) -> String {
+fn job_title(job: &DownloadJob) -> &str {
     job.metadata
         .as_ref()
-        .map(|metadata| metadata.title.clone())
-        .unwrap_or_else(|| job.url.clone())
+        .map(|metadata| metadata.title.as_str())
+        .unwrap_or(job.url.as_str())
 }
 
 fn format_bytes(value: Option<u64>) -> String {
@@ -1615,26 +1736,37 @@ fn sanitize_auth_details(
     authentication: &Authentication,
     cookie_jar: Option<&Path>,
 ) -> String {
+    // Each `replace` allocates, so only the needles actually present are applied.
+    fn redact(message: &mut String, needle: &str, replacement: &str) {
+        if !needle.is_empty() && message.contains(needle) {
+            *message = message.replace(needle, replacement);
+        }
+    }
+
     if let Some(source) = authentication.browser_cookie_source() {
-        message = message.replace(&source, "<browser-profile>");
+        redact(&mut message, &source, "<browser-profile>");
     }
     if let Authentication::BrowserCookies { browser, profile } = authentication {
-        if let Some(profile) = profile.as_deref().filter(|profile| !profile.is_empty()) {
-            message = message.replace(profile, "<profile>");
+        if let Some(profile) = profile.as_deref() {
+            redact(&mut message, profile, "<profile>");
         }
-        let browser_name = browser.as_yt_dlp_name();
-        message = message.replace(browser_name, "<browser>");
+        redact(&mut message, browser.as_yt_dlp_name(), "<browser>");
         let display_name = match browser {
             Browser::Chrome => "Chrome",
             Browser::Firefox => "Firefox",
             Browser::Brave => "Brave",
         };
-        message = message.replace(display_name, "<browser>");
+        redact(&mut message, display_name, "<browser>");
     }
     if let Some(cookie_jar) = cookie_jar {
-        message = message.replace(&cookie_jar.to_string_lossy().into_owned(), "<cookie-jar>");
+        redact(&mut message, &cookie_jar.to_string_lossy(), "<cookie-jar>");
     }
     message
+}
+
+fn home_directory() -> Option<String> {
+    directories::UserDirs::new()
+        .map(|directories| directories.home_dir().to_string_lossy().into_owned())
 }
 
 fn relative_time(timestamp: i64) -> String {
@@ -2003,16 +2135,15 @@ mod tests {
 
         let model = app.ui_model();
         let source_card = ui::card_rect_for_test(area, &model);
-        app.handle_mouse(
+        app.handle_mouse_at(
             mouse_event(MouseEventKind::Moved, source_card.x + 1, source_card.y + 2),
             area,
-            &model,
         );
         assert_eq!(app.hover_target, Some(ui::HoverTarget::SourceField(1)));
         assert_eq!(app.add.source_focus, original_focus);
         assert_eq!(app.add.authentication_index, original_authentication);
 
-        app.handle_mouse(mouse_event(MouseEventKind::Moved, 0, 0), area, &model);
+        app.handle_mouse_at(mouse_event(MouseEventKind::Moved, 0, 0), area);
         assert_eq!(app.hover_target, None);
         assert_eq!(app.add.source_focus, original_focus);
         assert_eq!(app.add.authentication_index, original_authentication);
@@ -2025,12 +2156,7 @@ mod tests {
         app.screen = Screen::Review;
         app.overlay = Some(Overlay::Help);
 
-        let model = app.ui_model();
-        app.handle_mouse(
-            mouse_event(MouseEventKind::ScrollDown, 40, 12),
-            area,
-            &model,
-        );
+        app.handle_mouse_at(mouse_event(MouseEventKind::ScrollDown, 40, 12), area);
 
         assert_eq!(app.review_scroll, 0);
     }
@@ -2044,14 +2170,13 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         let model = app.ui_model();
         let card = ui::card_rect_for_test(area, &model);
-        app.handle_mouse(
+        app.handle_mouse_at(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
                 card.x + 1,
                 card.y + 2,
             ),
             area,
-            &model,
         );
         assert_eq!(app.add.source_focus, 1);
         assert_eq!(app.add.selected_browser(), Some(Browser::Chrome));
@@ -2059,27 +2184,25 @@ mod tests {
 
         let model = app.ui_model();
         let enable = target_position(area, &model, ui::HoverTarget::CookieEnable);
-        app.handle_mouse(
+        app.handle_mouse_at(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
                 enable.0,
                 enable.1,
             ),
             area,
-            &model,
         );
         assert!(!app.cookie_notice_pending);
 
         let model = app.ui_model();
         let help = target_position(area, &model, ui::HoverTarget::Help);
-        app.handle_mouse(
+        app.handle_mouse_at(
             mouse_event(
                 MouseEventKind::Down(crossterm::event::MouseButton::Left),
                 help.0,
                 help.1,
             ),
             area,
-            &model,
         );
         assert_eq!(app.overlay, Some(Overlay::Help));
     }

@@ -48,6 +48,7 @@ FetchDeck can also:
 - Read cookies from local Chrome, Firefox, or Brave profiles after asking for confirmation.
 - Show progress, speed, ETA, status, and recent `yt-dlp` output.
 - Cancel and retry downloads while keeping partial files available to `yt-dlp`.
+- Download fragmented sources in parallel and prefer formats that merge without re-encoding.
 - Save settings and the latest 100 jobs locally.
 
 It accepts one video URL at a time. Playlist and channel URLs are not supported.
@@ -77,7 +78,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-FetchDeck reports detected tool versions, or `missing`, in its header. You can set custom executable paths for `yt-dlp` and `ffmpeg` in Settings.
+FetchDeck reports detected tool versions, or `missing`, in its header; it shows `checking` while it reads them in the background. You can set custom executable paths for `yt-dlp` and `ffmpeg` in Settings.
 
 ## Controls
 

@@ -48,6 +48,7 @@ FetchDeck 还可以：
 - 经确认后读取本机 Chrome、Firefox 或 Brave 配置中的 cookie。
 - 显示进度、速度、预计剩余时间、状态和最近的 `yt-dlp` 输出。
 - 取消和重试下载，并保留分段文件供 `yt-dlp` 继续使用。
+- 并行下载分片资源，并优先选择无需转码即可合并的格式。
 - 在本地保存设置和最近 100 个任务。
 
 每次只能处理一个视频 URL，不支持播放列表和频道 URL。
@@ -77,7 +78,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-FetchDeck 会在界面顶部显示依赖版本；找不到时显示 `missing`。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的可执行文件路径。
+FetchDeck 会在界面顶部显示依赖版本；后台读取期间显示 `checking`，找不到时显示 `missing`。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的可执行文件路径。
 
 ## 操作方式
 
