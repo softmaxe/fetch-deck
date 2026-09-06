@@ -77,7 +77,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-FetchDeck 会在界面顶部显示依赖版本；找不到时显示 `missing`。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的可执行文件路径。
+FetchDeck 会在界面顶部显示依赖版本；后台读取期间显示 `checking`，找不到时显示 `missing`。你也可以在 Settings 中指定 `yt-dlp` 和 `ffmpeg` 的可执行文件路径。
 
 ## 操作方式
 

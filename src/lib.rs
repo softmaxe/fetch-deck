@@ -1,5 +1,6 @@
 pub mod app;
 pub mod domain;
+pub mod input;
 pub mod platform;
 pub mod runtime;
 pub mod storage;

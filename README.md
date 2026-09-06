@@ -77,7 +77,7 @@ cargo build --release
 ./target/release/fetchdeck
 ```
 
-FetchDeck reports detected tool versions, or `missing`, in its header. You can set custom executable paths for `yt-dlp` and `ffmpeg` in Settings.
+FetchDeck reports detected tool versions, or `missing`, in its header; it shows `checking` while it reads them in the background. You can set custom executable paths for `yt-dlp` and `ffmpeg` in Settings.
 
 ## Controls
 
