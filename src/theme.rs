@@ -20,6 +20,14 @@ pub const ERROR: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
 pub const SELECTION_BACKGROUND: Color = Color::Rgb(0x31, 0x32, 0x44);
 pub const HOVER_BACKGROUND: Color = Color::Rgb(0x45, 0x47, 0x5a);
 
+/// The header and footer strips: same surface as `panel`, different borders.
+pub fn bar(borders: Borders) -> Block<'static> {
+    Block::default()
+        .borders(borders)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(PANEL))
+}
+
 pub fn panel(title: &str, focused: bool) -> Block<'_> {
     let border = if focused { FOCUS } else { BORDER };
     Block::default()
@@ -49,6 +57,16 @@ pub fn selected_hovered() -> Style {
         .fg(FOCUS)
         .bg(HOVER_BACKGROUND)
         .add_modifier(Modifier::BOLD)
+}
+
+/// The selected/hovered ladder every list row and field line shares.
+pub fn row_style(is_selected: bool, is_hovered: bool) -> Style {
+    match (is_selected, is_hovered) {
+        (true, true) => selected_hovered(),
+        (true, false) => selected(),
+        (false, true) => hovered(),
+        (false, false) => Style::default().fg(FOREGROUND).bg(SURFACE),
+    }
 }
 
 pub fn muted() -> Style {

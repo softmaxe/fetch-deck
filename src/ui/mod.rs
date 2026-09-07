@@ -68,66 +68,101 @@ pub enum HoverTarget {
     Quit,
 }
 
-fn cookie_actions() -> Vec<(&'static str, HoverTarget)> {
-    vec![
-        ("Enter Enable cookies", HoverTarget::CookieEnable),
-        ("Esc Disable", HoverTarget::CookieDisable),
+/// The Source and Options rows, in render order. Drawing and hit-testing both
+/// read these tables, so a row cannot move in one without moving in the other.
+fn source_fields<'a>(workflow: &'a WorkflowView<'_>) -> [(&'static str, &'a str); 3] {
+    [
+        ("URL", &workflow.source),
+        ("Cookies", &workflow.authentication),
+        ("Profile", &workflow.profile),
     ]
 }
 
-fn navigation_actions() -> Vec<(&'static str, HoverTarget)> {
-    vec![
-        ("F1 Help", HoverTarget::Help),
-        ("F2 History", HoverTarget::History),
-        ("F3 Settings", HoverTarget::Settings),
-        ("q Quit", HoverTarget::Quit),
+/// The `bool` marks a row the pointer can act on; "Not used" rows are inert.
+fn option_fields<'a>(workflow: &'a WorkflowView<'_>) -> [(&'static str, &'a str, bool); 4] {
+    [
+        ("Mode", &workflow.mode, true),
+        ("Quality", &workflow.quality, workflow.quality != "Not used"),
+        (
+            "Subtitle",
+            &workflow.subtitle,
+            workflow.subtitle != "Not used",
+        ),
+        ("Output", &workflow.output, true),
     ]
 }
 
-fn overlay_actions(model: &UiModel<'_>) -> Vec<(&'static str, HoverTarget)> {
+type Action = (&'static str, HoverTarget);
+
+/// Rendered between two footer actions; `footer_hit` steps over the same gap.
+const ACTION_GAP: &str = "   ";
+
+const COOKIE_ACTIONS: &[Action] = &[
+    ("Enter Enable cookies", HoverTarget::CookieEnable),
+    ("Esc Disable", HoverTarget::CookieDisable),
+];
+
+const NAVIGATION_ACTIONS: &[Action] = &[
+    ("F1 Help", HoverTarget::Help),
+    ("F2 History", HoverTarget::History),
+    ("F3 Settings", HoverTarget::Settings),
+    ("q Quit", HoverTarget::Quit),
+];
+
+const DONE_ACTIONS: &[Action] = &[
+    ("Enter New download", HoverTarget::DoneNew),
+    ("o Open output", HoverTarget::DoneOpen),
+];
+
+const DONE_ACTIONS_RETRYABLE: &[Action] = &[
+    ("Enter New download", HoverTarget::DoneNew),
+    ("r Retry", HoverTarget::DoneRetry),
+    ("o Open output", HoverTarget::DoneOpen),
+];
+
+fn overlay_actions(model: &UiModel<'_>) -> &'static [Action] {
     match model.overlay {
-        Some(Overlay::History) => vec![
+        Some(Overlay::History) => &[
             ("x Clear history", HoverTarget::HistoryClear),
             ("Esc Close", HoverTarget::OverlayClose),
         ],
-        Some(Overlay::Settings) if model.settings_editing => vec![
+        Some(Overlay::Settings) if model.settings_editing => &[
             ("Enter Save", HoverTarget::SettingsSave),
             ("Esc Cancel edit", HoverTarget::SettingsCancel),
         ],
-        Some(Overlay::Settings) => vec![
+        Some(Overlay::Settings) => &[
             ("Enter Edit", HoverTarget::SettingsEdit),
             ("s Save", HoverTarget::SettingsSave),
             ("Esc Close", HoverTarget::OverlayClose),
         ],
-        Some(Overlay::Help) => vec![("Esc Close", HoverTarget::OverlayClose)],
-        None => Vec::new(),
+        Some(Overlay::Help) => &[("Esc Close", HoverTarget::OverlayClose)],
+        None => &[],
     }
 }
 
-fn screen_actions(model: &UiModel<'_>) -> Vec<(&'static str, HoverTarget)> {
+fn screen_actions(model: &UiModel<'_>) -> &'static [Action] {
     match model.screen {
-        Screen::Source => vec![("Enter Continue", HoverTarget::SourceContinue)],
-        Screen::Probe => vec![("Esc Stop reading", HoverTarget::ProbeCancel)],
-        Screen::Options => vec![
+        Screen::Source => &[("Enter Continue", HoverTarget::SourceContinue)],
+        Screen::Probe => &[("Esc Stop reading", HoverTarget::ProbeCancel)],
+        Screen::Options => &[
             ("Enter Review", HoverTarget::OptionsReview),
             ("Esc Back", HoverTarget::OptionsBack),
         ],
-        Screen::Review => vec![
+        Screen::Review => &[
             ("Enter Start download", HoverTarget::ReviewStart),
             ("Esc Back", HoverTarget::ReviewBack),
         ],
-        Screen::Progress => vec![("c Cancel", HoverTarget::ProgressCancel)],
+        Screen::Progress => &[("c Cancel", HoverTarget::ProgressCancel)],
         Screen::Done => {
-            let mut actions = vec![("Enter New download", HoverTarget::DoneNew)];
             if model
                 .current_job
                 .as_ref()
                 .is_some_and(|job| job.status.is_retryable())
             {
-                actions.push(("r Retry", HoverTarget::DoneRetry));
+                DONE_ACTIONS_RETRYABLE
+            } else {
+                DONE_ACTIONS
             }
-            actions.push(("o Open output", HoverTarget::DoneOpen));
-            actions
         }
     }
 }
@@ -259,7 +294,7 @@ pub fn hit_test(area: Rect, model: &UiModel<'_>, column: u16, row: u16) -> Optio
     };
 
     if model.cookie_notice_pending {
-        return footer_hit(area, 1, cookie_actions(), column, row);
+        return footer_hit(area, 1, COOKIE_ACTIONS, column, row);
     }
     if let Some(overlay) = model.overlay {
         match overlay {
@@ -274,75 +309,58 @@ pub fn hit_test(area: Rect, model: &UiModel<'_>, column: u16, row: u16) -> Optio
             Overlay::History | Overlay::Help => {}
         }
         return footer_hit(area, 1, overlay_actions(model), column, row)
-            .or_else(|| footer_hit(area, 2, navigation_actions(), column, row));
+            .or_else(|| footer_hit(area, 2, NAVIGATION_ACTIONS, column, row));
     }
+
+    // Row `index` of the card, sized like the line `field_line_with_focus` draws.
+    let field_hit = |index: usize, name: &str, value: &str| {
+        let width = field_line_width(name, value).min(inner_width);
+        Rect::new(inner_x, card.y + 1 + index as u16, width, 1).contains((column, row).into())
+    };
 
     match model.screen {
         Screen::Source => {
-            let fields = [
-                ("URL", &model.workflow.source),
-                ("Cookies", &model.workflow.authentication),
-                ("Profile", &model.workflow.profile),
-            ];
-            for (index, (name, value)) in fields.into_iter().enumerate() {
-                let width = field_line_width(name, value).min(inner_width);
-                let rect = Rect::new(inner_x, card.y + 1 + index as u16, width, 1);
-                if rect.contains((column, row).into()) {
-                    let target = HoverTarget::SourceField(index);
-                    return Some(target);
-                }
+            let hit = source_fields(&model.workflow)
+                .into_iter()
+                .enumerate()
+                .find(|(index, (name, value))| field_hit(*index, name, value));
+            if let Some((index, _)) = hit {
+                return Some(HoverTarget::SourceField(index));
             }
         }
         Screen::Options => {
-            let fields = [
-                ("Mode", &model.workflow.mode, true),
-                (
-                    "Quality",
-                    &model.workflow.quality,
-                    model.workflow.quality != "Not used",
-                ),
-                (
-                    "Subtitle",
-                    &model.workflow.subtitle,
-                    model.workflow.subtitle != "Not used",
-                ),
-                ("Output", &model.workflow.output, true),
-            ];
-            for (index, (name, value, interactive)) in fields.into_iter().enumerate() {
-                if !interactive {
-                    continue;
-                }
-                let width = field_line_width(name, value).min(inner_width);
-                let rect = Rect::new(inner_x, card.y + 1 + index as u16, width, 1);
-                if rect.contains((column, row).into()) {
-                    let target = HoverTarget::OptionsField(index);
-                    return Some(target);
-                }
+            let hit = option_fields(&model.workflow)
+                .into_iter()
+                .enumerate()
+                .filter(|(_, (_, _, interactive))| *interactive)
+                .find(|(index, (name, value, _))| field_hit(*index, name, value));
+            if let Some((index, _)) = hit {
+                return Some(HoverTarget::OptionsField(index));
             }
         }
         _ => {}
     }
     footer_hit(area, 1, screen_actions(model), column, row)
-        .or_else(|| footer_hit(area, 2, navigation_actions(), column, row))
+        .or_else(|| footer_hit(area, 2, NAVIGATION_ACTIONS, column, row))
 }
 
 fn footer_hit(
     area: Rect,
     line: u16,
-    segments: Vec<(&'static str, HoverTarget)>,
+    segments: &[Action],
     column: u16,
     row: u16,
 ) -> Option<HoverTarget> {
     let total = segments.iter().map(|(label, _)| label.len()).sum::<usize>()
-        + segments.len().saturating_sub(1) * 3;
+        + segments.len().saturating_sub(1) * ACTION_GAP.len();
     let mut x = area.x + area.width / 2 - total as u16 / 2;
     let y = area.y + area.height.saturating_sub(3) + line;
     for (label, target) in segments {
         let rect = Rect::new(x, y, label.len() as u16, 1);
         if rect.contains((column, row).into()) {
-            return Some(target);
+            return Some(*target);
         }
-        x = x.saturating_add(label.len() as u16 + 3);
+        x = x.saturating_add((label.len() + ACTION_GAP.len()) as u16);
     }
     None
 }
@@ -412,13 +430,7 @@ fn draw_header(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
         ),
     ]);
     frame.render_widget(
-        Paragraph::new(line)
-            .block(
-                Block::default()
-                    .borders(Borders::BOTTOM)
-                    .border_style(Style::default().fg(theme::BORDER)),
-            )
-            .style(Style::default().bg(theme::PANEL)),
+        Paragraph::new(line).block(theme::bar(Borders::BOTTOM)),
         area,
     );
 }
@@ -486,26 +498,18 @@ fn draw_screen(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
 
 fn draw_source(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let source = &model.workflow;
-    let mut lines = vec![
-        field_line_with_focus(
-            "URL",
-            &source.source,
-            source.focused_field == 0,
-            model.hover_target == Some(HoverTarget::SourceField(0)),
-        ),
-        field_line_with_focus(
-            "Cookies",
-            &source.authentication,
-            source.focused_field == 1,
-            model.hover_target == Some(HoverTarget::SourceField(1)),
-        ),
-        field_line_with_focus(
-            "Profile",
-            &source.profile,
-            source.focused_field == 2,
-            model.hover_target == Some(HoverTarget::SourceField(2)),
-        ),
-    ];
+    let mut lines = source_fields(source)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, value))| {
+            field_line_with_focus(
+                name,
+                value,
+                source.focused_field == index,
+                model.hover_target == Some(HoverTarget::SourceField(index)),
+            )
+        })
+        .collect::<Vec<_>>();
     if model.screen == Screen::Probe {
         lines.push(Line::from(""));
         lines.extend(source.probe_summary.iter().map(|line| {
@@ -534,32 +538,18 @@ fn draw_options(
     workflow: &WorkflowView<'_>,
     hover: Option<HoverTarget>,
 ) {
-    let lines = vec![
-        field_line_with_focus(
-            "Mode",
-            &workflow.mode,
-            workflow.focused_field == 0,
-            hover == Some(HoverTarget::OptionsField(0)),
-        ),
-        field_line_with_focus(
-            "Quality",
-            &workflow.quality,
-            workflow.focused_field == 1,
-            hover == Some(HoverTarget::OptionsField(1)),
-        ),
-        field_line_with_focus(
-            "Subtitle",
-            &workflow.subtitle,
-            workflow.focused_field == 2,
-            hover == Some(HoverTarget::OptionsField(2)),
-        ),
-        field_line_with_focus(
-            "Output",
-            &workflow.output,
-            workflow.focused_field == 3,
-            hover == Some(HoverTarget::OptionsField(3)),
-        ),
-    ];
+    let lines = option_fields(workflow)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, value, _))| {
+            field_line_with_focus(
+                name,
+                value,
+                workflow.focused_field == index,
+                hover == Some(HoverTarget::OptionsField(index)),
+            )
+        })
+        .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -595,13 +585,7 @@ fn draw_review(frame: &mut Frame, area: Rect, workflow: &WorkflowView<'_>) {
 
 fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
     let Some(job) = job else {
-        frame.render_widget(
-            Paragraph::new("Preparing download...")
-                .style(theme::muted())
-                .block(theme::panel(" Progress ", true)),
-            area,
-        );
-        return;
+        return draw_placeholder(frame, area, " Progress ", "Preparing download...");
     };
     let parts = Layout::vertical([
         Constraint::Length(6.min(area.height.saturating_sub(4))),
@@ -629,12 +613,8 @@ fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
     );
     frame.render_widget(
         Gauge::default()
-            .ratio(f64::from(job.progress_percent.min(100)) / 100.0)
-            .label(format!(
-                "{}  {}%",
-                job.status.label(),
-                job.progress_percent.min(100)
-            ))
+            .ratio(f64::from(job.progress_percent) / 100.0)
+            .label(format!("{}  {}%", job.status.label(), job.progress_percent))
             .gauge_style(Style::default().fg(theme::PROGRESS).bg(theme::SURFACE)),
         parts[1],
     );
@@ -655,13 +635,7 @@ fn draw_progress(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
 
 fn draw_done(frame: &mut Frame, area: Rect, job: Option<&JobDetails<'_>>) {
     let Some(job) = job else {
-        frame.render_widget(
-            Paragraph::new("No completed download")
-                .style(theme::muted())
-                .block(theme::panel(" Done ", true)),
-            area,
-        );
-        return;
+        return draw_placeholder(frame, area, " Done ", "No completed download");
     };
     let status_style = match job.status {
         JobStatus::Completed => Style::default().fg(theme::SUCCESS),
@@ -736,15 +710,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
         .enumerate()
         .map(|(index, field)| {
             let hovered = model.hover_target == Some(HoverTarget::SettingRow(index));
-            let style = if index == model.selected_setting && hovered {
-                theme::selected_hovered()
-            } else if index == model.selected_setting {
-                theme::selected()
-            } else if hovered {
-                theme::hovered()
-            } else {
-                Style::default().fg(theme::FOREGROUND).bg(theme::SURFACE)
-            };
+            let style = theme::row_style(index == model.selected_setting, hovered);
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(format!("{:<18}", field.name), Modifier::BOLD),
@@ -787,15 +753,14 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     let status = model.status_message.as_deref().unwrap_or("Ready");
     let actions = if model.cookie_notice_pending {
-        cookie_actions()
+        COOKIE_ACTIONS
     } else {
         match model.overlay {
             Some(_) => overlay_actions(model),
             None => screen_actions(model),
         }
     };
-    let action_line = action_line(&actions, model.hover_target);
-    let navigation = navigation_actions();
+    let action_line = action_line(actions, model.hover_target);
     let lines = vec![
         Line::from(Span::styled(
             format!(" {status} "),
@@ -804,7 +769,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
         .alignment(Alignment::Center),
         action_line.alignment(Alignment::Center),
         action_line_with_style(
-            &navigation,
+            NAVIGATION_ACTIONS,
             model.hover_target,
             theme::faint().bg(theme::PANEL),
         )
@@ -812,21 +777,13 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &UiModel<'_>) {
     ];
     frame.render_widget(
         Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(theme::BORDER)),
-            )
-            .wrap(Wrap { trim: true })
-            .style(Style::default().bg(theme::PANEL)),
+            .block(theme::bar(Borders::TOP))
+            .wrap(Wrap { trim: true }),
         area,
     );
 }
 
-fn action_line(
-    actions: &[(&'static str, HoverTarget)],
-    hovered: Option<HoverTarget>,
-) -> Line<'static> {
+fn action_line(actions: &[Action], hovered: Option<HoverTarget>) -> Line<'static> {
     action_line_with_style(
         actions,
         hovered,
@@ -835,14 +792,14 @@ fn action_line(
 }
 
 fn action_line_with_style(
-    actions: &[(&'static str, HoverTarget)],
+    actions: &[Action],
     hovered: Option<HoverTarget>,
     normal: Style,
 ) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (label, target)) in actions.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled("   ", normal));
+            spans.push(Span::styled(ACTION_GAP, normal));
         }
         spans.push(Span::styled(
             *label,
@@ -854,6 +811,15 @@ fn action_line_with_style(
         ));
     }
     Line::from(spans)
+}
+
+fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, message: &str) {
+    frame.render_widget(
+        Paragraph::new(message)
+            .style(theme::muted())
+            .block(theme::panel(title, true)),
+        area,
+    );
 }
 
 fn field_line<'a>(name: &'a str, value: &'a str) -> Line<'a> {
@@ -870,22 +836,12 @@ fn field_line_with_focus<'a>(
     hovered: bool,
 ) -> Line<'a> {
     let marker = if focused { ">" } else { " " };
-    let style = if focused && hovered {
-        theme::selected_hovered()
-    } else if focused {
-        theme::selected()
-    } else if hovered {
-        theme::hovered()
-    } else {
-        Style::default().fg(theme::FOREGROUND).bg(theme::SURFACE)
-    };
-    Line::from(format!("{marker} {name:<9}{value}")).style(style)
+    Line::from(format!("{marker} {name:<9}{value}")).style(theme::row_style(focused, hovered))
 }
 
+/// Measured from the rendered line so hit-testing cannot drift from drawing.
 fn field_line_width(name: &str, value: &str) -> u16 {
-    // Mirrors the layout of `field_line_with_focus` without building the line.
-    let name_width = Span::raw(name).width().max(9);
-    (2 + name_width + Span::raw(value).width()) as u16
+    field_line_with_focus(name, value, false, false).width() as u16
 }
 
 #[cfg(test)]

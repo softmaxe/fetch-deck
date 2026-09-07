@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
@@ -30,7 +30,8 @@ use crate::{
         WorkflowView,
     },
     yt_dlp::{
-        YtDlpErrorKind, YtDlpPaths, build_download_command, build_probe_command, detect_binary,
+        CommandSpec, YtDlpErrorKind, YtDlpPaths, build_download_command, build_probe_command,
+        detect_binary,
     },
 };
 
@@ -41,6 +42,7 @@ const NETSCAPE_COOKIE_HEADER: &str = "# Netscape HTTP Cookie File\n";
 /// once. Input redraws immediately instead of waiting for this.
 const FRAME_INTERVAL: Duration = Duration::from_millis(80);
 const DEPENDENCY_MISSING: &str = "missing";
+const RUNTIME_UNAVAILABLE: &str = "Download runtime is unavailable";
 const DEPENDENCY_CHECKING: &str = "checking";
 
 pub struct App {
@@ -133,6 +135,7 @@ struct AddForm {
     authentication_index: usize,
     profiles: Vec<BrowserProfile>,
     profile_index: usize,
+    discovered_profiles: HashMap<Browser, Vec<BrowserProfile>>,
     metadata: Option<MediaMetadata>,
     probe_request_id: Option<u64>,
     mode_index: usize,
@@ -152,6 +155,7 @@ impl AddForm {
             authentication_index: 0,
             profiles: Vec::new(),
             profile_index: 0,
+            discovered_profiles: HashMap::new(),
             metadata: None,
             probe_request_id: None,
             mode_index: 0,
@@ -164,12 +168,10 @@ impl AddForm {
     }
 
     fn selected_browser(&self) -> Option<Browser> {
-        match self.authentication_index {
-            1 => Some(Browser::Chrome),
-            2 => Some(Browser::Firefox),
-            3 => Some(Browser::Brave),
-            _ => None,
-        }
+        self.authentication_index
+            .checked_sub(1)
+            .and_then(|index| Browser::ALL.get(index))
+            .cloned()
     }
 
     fn authentication(&self) -> Authentication {
@@ -184,12 +186,10 @@ impl AddForm {
             .unwrap_or(Authentication::None)
     }
 
-    fn authentication_label(&self) -> &'static str {
+    fn authentication_label(&self) -> Cow<'static, str> {
         match self.selected_browser() {
-            None => "None",
-            Some(Browser::Chrome) => "Chrome cookies",
-            Some(Browser::Firefox) => "Firefox cookies",
-            Some(Browser::Brave) => "Brave cookies",
+            None => Cow::Borrowed("None"),
+            Some(browser) => Cow::Owned(format!("{} cookies", browser.display_name())),
         }
     }
 
@@ -205,10 +205,14 @@ impl AddForm {
     }
 
     fn refresh_profiles(&mut self) {
-        self.profiles = self
-            .selected_browser()
-            .map(|browser| discover_browser_profiles(&browser))
-            .unwrap_or_default();
+        self.profiles = match self.selected_browser() {
+            Some(browser) => self
+                .discovered_profiles
+                .entry(browser.clone())
+                .or_insert_with(|| discover_browser_profiles(&browser))
+                .clone(),
+            None => Vec::new(),
+        };
         self.profile_index = 0;
     }
 
@@ -241,13 +245,17 @@ impl AddForm {
                 .and_then(|metadata| metadata.subtitles.get(self.subtitle_index))
                 .map(|subtitle| DownloadMode::Subtitles {
                     language: subtitle.language.clone(),
-                    format: if self.subtitle_format_index == 0 {
-                        SubtitleFormat::Srt
-                    } else {
-                        SubtitleFormat::Vtt
-                    },
+                    format: self.selected_subtitle_format(),
                 }),
             _ => None,
+        }
+    }
+
+    fn selected_subtitle_format(&self) -> SubtitleFormat {
+        if self.subtitle_format_index == 0 {
+            SubtitleFormat::Srt
+        } else {
+            SubtitleFormat::Vtt
         }
     }
 
@@ -263,7 +271,7 @@ impl AddForm {
         if self.mode_index != 0 {
             return "Not used";
         }
-        quality_label(self.selected_quality())
+        self.selected_quality().label()
     }
 
     fn subtitle_label(&self) -> Cow<'_, str> {
@@ -276,12 +284,10 @@ impl AddForm {
             .and_then(|metadata| metadata.subtitles.get(self.subtitle_index))
             .map(|subtitle| subtitle.language.as_str())
             .unwrap_or("No manual subtitles");
-        let format = if self.subtitle_format_index == 0 {
-            "SRT"
-        } else {
-            "VTT"
-        };
-        Cow::Owned(format!("{language} / {format}"))
+        Cow::Owned(format!(
+            "{language} / {}",
+            self.selected_subtitle_format().label()
+        ))
     }
 
     fn output_focus(&self) -> usize {
@@ -344,7 +350,8 @@ impl App {
             dependencies,
             runtime: runtime::spawn(),
             dependency_versions,
-            home_directory: home_directory(),
+            home_directory: crate::domain::home_directory()
+                .map(|home| home.to_string_lossy().into_owned()),
             jobs: Vec::new(),
             logs: HashMap::new(),
             log_offsets: HashMap::new(),
@@ -440,10 +447,15 @@ impl App {
             }
             Event::Resize(..) => true,
             Event::Mouse(mouse) => {
-                let area: Rect = terminal.size()?.into();
-                let target = {
+                let target = if matches!(
+                    mouse.kind,
+                    MouseEventKind::Moved | MouseEventKind::Down(MouseButton::Left)
+                ) {
+                    let area: Rect = terminal.size()?.into();
                     let model = self.ui_model();
                     ui::hit_test(area, &model, mouse.column, mouse.row)
+                } else {
+                    None
                 };
                 self.handle_mouse(mouse, target)
             }
@@ -479,19 +491,9 @@ impl App {
         }
 
         match key.code {
-            KeyCode::F(1) => {
-                self.overlay = Some(Overlay::Help);
-                return;
-            }
-            KeyCode::F(2) => {
-                self.overlay = Some(Overlay::History);
-                return;
-            }
-            KeyCode::F(3) => {
-                self.settings_values = settings_values(&self.config);
-                self.overlay = Some(Overlay::Settings);
-                return;
-            }
+            KeyCode::F(1) => return self.open_overlay(Overlay::Help),
+            KeyCode::F(2) => return self.open_overlay(Overlay::History),
+            KeyCode::F(3) => return self.open_overlay(Overlay::Settings),
             _ => {}
         }
 
@@ -499,11 +501,7 @@ impl App {
             Screen::Source => self.handle_source_key(key),
             Screen::Probe => {
                 if key.code == KeyCode::Esc {
-                    if let Some(request_id) = self.add.probe_request_id.take() {
-                        self.pending_cookie_sessions.remove(&request_id);
-                    }
-                    self.screen = Screen::Source;
-                    self.status_message = Some("Metadata result ignored".into());
+                    self.ignore_probe();
                 }
             }
             Screen::Options => self.handle_options_key(key),
@@ -543,12 +541,9 @@ impl App {
             | (Some(Overlay::Help), KeyCode::F(1))
             | (Some(Overlay::History), KeyCode::F(2))
             | (Some(Overlay::Settings), KeyCode::F(3)) => self.overlay = None,
-            (_, KeyCode::F(1)) => self.overlay = Some(Overlay::Help),
-            (_, KeyCode::F(2)) => self.overlay = Some(Overlay::History),
-            (_, KeyCode::F(3)) => {
-                self.settings_values = settings_values(&self.config);
-                self.overlay = Some(Overlay::Settings);
-            }
+            (_, KeyCode::F(1)) => self.open_overlay(Overlay::Help),
+            (_, KeyCode::F(2)) => self.open_overlay(Overlay::History),
+            (_, KeyCode::F(3)) => self.open_overlay(Overlay::Settings),
             (Some(Overlay::History), KeyCode::Char('x')) => {
                 if let Err(error) = self.history_store.clear() {
                     self.status_message = Some(format!("History could not be cleared: {error}"));
@@ -584,17 +579,7 @@ impl App {
                 self.settings_values = settings_values(&self.config);
                 self.status_message = Some("Setting edit cancelled".into());
             }
-            KeyCode::Backspace => {
-                self.settings_values[self.selected_setting].pop();
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                self.settings_values[self.selected_setting].push(character);
-            }
-            _ => {}
+            _ => self.edit_focused_input(key),
         }
     }
 
@@ -609,23 +594,7 @@ impl App {
             KeyCode::Left => self.cycle_source_choice(-1),
             KeyCode::Right => self.cycle_source_choice(1),
             KeyCode::Enter => self.start_probe(),
-            KeyCode::Backspace if self.add.source_focus == 0 => {
-                self.add.url.pop();
-            }
-            KeyCode::Char('u')
-                if self.add.source_focus == 0 && key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.add.url.clear();
-            }
-            KeyCode::Char(character)
-                if self.add.source_focus == 0
-                    && !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                self.add.url.push(character);
-            }
-            _ => {}
+            _ => self.edit_focused_input(key),
         }
     }
 
@@ -735,18 +704,7 @@ impl App {
                     self.status_message = Some("Review the download, then start it".into());
                 }
             }
-            KeyCode::Backspace if self.add.option_focus == self.add.output_focus() => {
-                self.add.output.pop();
-            }
-            KeyCode::Char(character)
-                if self.add.option_focus == self.add.output_focus()
-                    && !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                self.add.output.push(character);
-            }
-            _ => {}
+            _ => self.edit_focused_input(key),
         }
     }
 
@@ -823,38 +781,79 @@ impl App {
         self.jobs.push(job);
         self.logs.insert(job_id.clone(), VecDeque::new());
         self.selected_job = self.jobs.len().saturating_sub(1);
-        let runtime_unavailable = self
+        self.config.output_directory = output_directory;
+        let _ = self.save_config();
+        self.enqueue(job_id, command, "Download started");
+    }
+
+    /// Hands a job to the runtime and settles the screen on the outcome; a
+    /// first start and a retry share this tail.
+    fn enqueue(&mut self, job_id: String, command: CommandSpec, started: &str) {
+        if self
             .runtime
             .commands
-            .send(RuntimeCommand::Enqueue {
-                job_id: job_id.clone(),
-                command,
-            })
-            .is_err();
-        if runtime_unavailable && let Some(job) = self.jobs.last_mut() {
-            job.status = JobStatus::Failed;
-            job.error = Some("Download runtime is unavailable".into());
-        }
-
-        self.config.output_directory = output_directory;
-        self.save_config();
-        if runtime_unavailable {
+            .send(RuntimeCommand::Enqueue { job_id, command })
+            .is_err()
+        {
+            if let Some(job) = self.jobs.get_mut(self.selected_job) {
+                job.status = JobStatus::Failed;
+                job.error = Some(RUNTIME_UNAVAILABLE.into());
+            }
             self.screen = Screen::Done;
-            self.status_message = Some("Download runtime is unavailable".into());
+            self.status_message = Some(RUNTIME_UNAVAILABLE.into());
         } else {
             self.screen = Screen::Progress;
-            self.status_message = Some("Download started".into());
+            self.status_message = Some(started.into());
         }
     }
 
     fn handle_paste(&mut self, text: &str) {
+        if let Some(buffer) = self.focused_input() {
+            buffer.push_str(text.trim());
+        }
+    }
+
+    fn open_overlay(&mut self, overlay: Overlay) {
+        if overlay == Overlay::Settings {
+            self.settings_values = settings_values(&self.config);
+        }
+        self.overlay = Some(overlay);
+    }
+
+    /// The text buffer the current focus edits, if any. Typing and pasting both
+    /// route through here so every input field behaves the same.
+    fn focused_input(&mut self) -> Option<&mut String> {
         if self.overlay == Some(Overlay::Settings) && self.editing_setting {
-            self.settings_values[self.selected_setting].push_str(text.trim());
-        } else if self.screen == Screen::Source && self.add.source_focus == 0 {
-            self.add.url.push_str(text.trim());
-        } else if self.screen == Screen::Options && self.add.option_focus == self.add.output_focus()
-        {
-            self.add.output.push_str(text.trim());
+            return self.settings_values.get_mut(self.selected_setting);
+        }
+        if self.overlay.is_some() {
+            return None;
+        }
+        let output_focused = self.add.option_focus == self.add.output_focus();
+        match self.screen {
+            Screen::Source if self.add.source_focus == 0 => Some(&mut self.add.url),
+            Screen::Options if output_focused => Some(&mut self.add.output),
+            _ => None,
+        }
+    }
+
+    fn edit_focused_input(&mut self, key: KeyEvent) {
+        let Some(buffer) = self.focused_input() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Backspace => {
+                buffer.pop();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => buffer.clear(),
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                buffer.push(character)
+            }
+            _ => {}
         }
     }
 
@@ -865,11 +864,13 @@ impl App {
             self.add.authentication_index = 0;
             self.add.refresh_profiles();
         }
-        self.status_message = Some(match self.config_store.save(&self.config) {
-            Ok(()) if enabled => "Browser cookie access enabled for this job".into(),
-            Ok(()) => "Browser cookie access disabled".into(),
-            Err(error) => format!("Config could not be saved: {error}"),
-        });
+        if self.save_config() {
+            self.status_message = Some(if enabled {
+                "Browser cookie access enabled for this job".into()
+            } else {
+                "Browser cookie access disabled".into()
+            });
+        }
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent, target: Option<ui::HoverTarget>) -> bool {
@@ -881,7 +882,7 @@ impl App {
                 }
                 self.hover_target = target;
             }
-            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            MouseEventKind::Down(MouseButton::Left) => {
                 self.hover_target = target;
                 if let Some(target) = target {
                     self.activate_mouse_target(target);
@@ -947,11 +948,7 @@ impl App {
             HoverTarget::DoneNew => self.start_new_download(),
             HoverTarget::DoneRetry => self.retry_selected_job(),
             HoverTarget::DoneOpen => self.open_selected_output(),
-            HoverTarget::ProbeCancel => {
-                self.add.probe_request_id = None;
-                self.screen = Screen::Source;
-                self.status_message = Some("Metadata result ignored".into());
-            }
+            HoverTarget::ProbeCancel => self.ignore_probe(),
             HoverTarget::HistoryClear => {
                 self.handle_overlay_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
             }
@@ -977,14 +974,21 @@ impl App {
             HoverTarget::SettingsCancel => {
                 self.handle_settings_edit_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             }
-            HoverTarget::Help => self.overlay = Some(Overlay::Help),
-            HoverTarget::History => self.overlay = Some(Overlay::History),
-            HoverTarget::Settings => {
-                self.settings_values = settings_values(&self.config);
-                self.overlay = Some(Overlay::Settings);
-            }
+            HoverTarget::Help => self.open_overlay(Overlay::Help),
+            HoverTarget::History => self.open_overlay(Overlay::History),
+            HoverTarget::Settings => self.open_overlay(Overlay::Settings),
             HoverTarget::Quit => self.request_quit(),
         }
+    }
+
+    /// Abandons the in-flight probe. Dropping the pending cookie session with
+    /// it is what keeps an ignored probe from leaking its jar.
+    fn ignore_probe(&mut self) {
+        if let Some(request_id) = self.add.probe_request_id.take() {
+            self.pending_cookie_sessions.remove(&request_id);
+        }
+        self.screen = Screen::Source;
+        self.status_message = Some("Metadata result ignored".into());
     }
 
     fn start_new_download(&mut self) {
@@ -1049,20 +1053,7 @@ impl App {
         job.error = None;
         job.output_path = None;
         push_log(&mut self.logs, &job_id, "Retry queued".into());
-        let runtime_unavailable = self
-            .runtime
-            .commands
-            .send(RuntimeCommand::Enqueue { job_id, command })
-            .is_err();
-        if runtime_unavailable {
-            job.status = JobStatus::Failed;
-            job.error = Some("Download runtime is unavailable".into());
-            self.screen = Screen::Done;
-            self.status_message = Some("Download runtime is unavailable".into());
-        } else {
-            self.screen = Screen::Progress;
-            self.status_message = Some("Retry started".into());
-        }
+        self.enqueue(job_id, command, "Retry started");
     }
 
     fn open_selected_output(&mut self) {
@@ -1100,19 +1091,32 @@ impl App {
             self.status_message = Some("Output directory cannot be empty".into());
             return;
         }
+        let yt_dlp_path = optional_path(&self.settings_values[1]);
+        let ffmpeg_path = optional_path(&self.settings_values[2]);
+        let binaries_changed =
+            yt_dlp_path != self.config.yt_dlp_path || ffmpeg_path != self.config.ffmpeg_path;
         self.config.output_directory = expand_user_path(output);
-        self.config.yt_dlp_path = optional_path(&self.settings_values[1]);
-        self.config.ffmpeg_path = optional_path(&self.settings_values[2]);
-        self.dependencies = Dependencies::detect(&self.config);
-        self.dependency_versions = spawn_version_probe(&self.dependencies);
-        self.save_config();
+        self.config.yt_dlp_path = yt_dlp_path;
+        self.config.ffmpeg_path = ffmpeg_path;
+        if binaries_changed {
+            self.dependencies = Dependencies::detect(&self.config);
+            self.dependency_versions = spawn_version_probe(&self.dependencies);
+        }
+        if self.save_config() {
+            self.status_message = Some("Settings saved".into());
+        }
         self.settings_values = settings_values(&self.config);
-        self.status_message = Some("Settings saved".into());
     }
 
-    fn save_config(&mut self) {
-        if let Err(error) = self.config_store.save(&self.config) {
-            self.status_message = Some(format!("Config could not be saved: {error}"));
+    /// Returns whether the save succeeded; on failure the status line already
+    /// carries the reason, so callers must not overwrite it.
+    fn save_config(&mut self) -> bool {
+        match self.config_store.save(&self.config) {
+            Ok(()) => true,
+            Err(error) => {
+                self.status_message = Some(format!("Config could not be saved: {error}"));
+                false
+            }
         }
     }
 
@@ -1196,21 +1200,13 @@ impl App {
                 }
             }
             RuntimeEvent::JobFinished { job_id } => {
-                let completed = if let Some(job) = self.job_mut(&job_id) {
-                    job.status = JobStatus::Completed;
-                    job.progress.status = Some("finished".into());
-                    Some(job.clone())
-                } else {
-                    None
-                };
-                push_log(&mut self.logs, &job_id, "Download completed".into());
-                if let Some(job) = completed {
-                    self.record_history(&job);
-                }
-                if self.is_current_job(&job_id) {
-                    self.screen = Screen::Done;
-                }
-                self.status_message = Some("Download completed".into());
+                self.finish_job(
+                    &job_id,
+                    JobStatus::Completed,
+                    None,
+                    "Download completed",
+                    "Download completed",
+                );
             }
             RuntimeEvent::JobFailed {
                 job_id,
@@ -1218,46 +1214,54 @@ impl App {
                 message,
             } => {
                 let message = self.sanitize_log(&job_id, &message);
-                let guidance = error_guidance(kind);
-                let combined = format!("{message}. {guidance}");
-                let failed = if let Some(job) = self.job_mut(&job_id) {
-                    job.status = JobStatus::Failed;
-                    job.error = Some(combined.clone());
-                    Some(job.clone())
-                } else {
-                    None
-                };
-                push_log(&mut self.logs, &job_id, combined.clone());
-                if let Some(job) = failed {
-                    self.record_history(&job);
-                }
-                if self.is_current_job(&job_id) {
-                    self.screen = Screen::Done;
-                }
-                self.status_message = Some(combined);
+                let combined = format!("{message}. {}", error_guidance(kind));
+                self.finish_job(
+                    &job_id,
+                    JobStatus::Failed,
+                    Some(combined.clone()),
+                    &combined,
+                    &combined,
+                );
             }
             RuntimeEvent::JobCancelled { job_id } => {
-                let cancelled = if let Some(job) = self.job_mut(&job_id) {
-                    job.status = JobStatus::Cancelled;
-                    Some(job.clone())
-                } else {
-                    None
-                };
-                push_log(
-                    &mut self.logs,
+                self.finish_job(
                     &job_id,
-                    "Cancelled; partial files were kept for retry".into(),
+                    JobStatus::Cancelled,
+                    None,
+                    "Cancelled; partial files were kept for retry",
+                    "Job cancelled",
                 );
-                if let Some(job) = cancelled {
-                    self.record_history(&job);
-                }
-                if self.is_current_job(&job_id) {
-                    self.screen = Screen::Done;
-                }
-                self.status_message = Some("Job cancelled".into());
             }
             RuntimeEvent::Stopped => self.should_quit = true,
         }
+    }
+
+    /// Shared tail for every terminal job result: settle the job, log it,
+    /// record it in history, and show the Done screen if it is the current one.
+    fn finish_job(
+        &mut self,
+        job_id: &str,
+        status: JobStatus,
+        error: Option<String>,
+        log_line: &str,
+        status_message: &str,
+    ) {
+        let finished = self.job_mut(job_id).map(|job| {
+            job.status = status;
+            job.error = error;
+            if status == JobStatus::Completed {
+                job.progress.status = Some("finished".into());
+            }
+            job.clone()
+        });
+        push_log(&mut self.logs, job_id, log_line.to_owned());
+        if let Some(job) = finished {
+            self.record_history(&job);
+        }
+        if self.is_current_job(job_id) {
+            self.screen = Screen::Done;
+        }
+        self.status_message = Some(status_message.to_owned());
     }
 
     fn job_mut(&mut self, job_id: &str) -> Option<&mut DownloadJob> {
@@ -1285,10 +1289,10 @@ impl App {
     }
 
     fn sanitize_log(&self, job_id: &str, line: &str) -> String {
-        let mut sanitized = match self.home_directory.as_deref() {
-            Some(home) if line.contains(home) => line.replace(home, "~"),
-            _ => line.to_owned(),
-        };
+        let mut sanitized = line.to_owned();
+        if let Some(home) = self.home_directory.as_deref() {
+            redact(&mut sanitized, home, "~");
+        }
         if let Some(authentication) = self
             .jobs
             .iter()
@@ -1381,13 +1385,14 @@ impl App {
             current_job,
             workflow: self.workflow_view(),
             history_rows: if self.overlay == Some(Overlay::History) {
+                let now = unix_time();
                 self.history
                     .iter()
                     .rev()
                     .map(|entry| HistoryRow {
                         title: Cow::Borrowed(entry.title.as_str()),
                         result: Cow::Borrowed(entry.status.label()),
-                        finished_at: Cow::Owned(relative_time(entry.timestamp_unix_seconds)),
+                        finished_at: Cow::Owned(relative_time(now, entry.timestamp_unix_seconds)),
                         output: entry
                             .output_path
                             .as_ref()
@@ -1401,17 +1406,17 @@ impl App {
             settings_fields: if self.overlay == Some(Overlay::Settings) {
                 vec![
                     SettingField {
-                        name: Cow::Borrowed("Output directory"),
+                        name: Cow::Borrowed(SETTING_NAMES[0]),
                         value: Cow::Borrowed(&self.settings_values[0]),
                         hint: Cow::Borrowed("Default folder for new jobs"),
                     },
                     SettingField {
-                        name: Cow::Borrowed("yt-dlp path"),
+                        name: Cow::Borrowed(SETTING_NAMES[1]),
                         value: Cow::Borrowed(&self.settings_values[1]),
                         hint: Cow::Borrowed(&self.dependencies.yt_dlp_summary),
                     },
                     SettingField {
-                        name: Cow::Borrowed("ffmpeg path"),
+                        name: Cow::Borrowed(SETTING_NAMES[2]),
                         value: Cow::Borrowed(&self.settings_values[2]),
                         hint: Cow::Borrowed(&self.dependencies.ffmpeg_summary),
                     },
@@ -1462,7 +1467,7 @@ impl App {
                 _ => 0,
             },
             source: Cow::Borrowed(self.add.url.as_str()),
-            authentication: Cow::Borrowed(self.add.authentication_label()),
+            authentication: self.add.authentication_label(),
             profile: Cow::Borrowed(self.add.profile_label()),
             probe_summary,
             mode: Cow::Borrowed(self.add.mode_label()),
@@ -1559,19 +1564,20 @@ async fn binary_summary(path: Option<PathBuf>, version_flag: &str) -> String {
     }
 }
 
+/// Names of the editable settings, in the order `settings_values` and the
+/// Settings overlay both index into.
+const SETTING_NAMES: [&str; 3] = ["Output directory", "yt-dlp path", "ffmpeg path"];
+
 fn settings_values(config: &AppConfig) -> Vec<String> {
+    fn optional(path: Option<&PathBuf>) -> String {
+        path.map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
     vec![
         config.output_directory.to_string_lossy().into_owned(),
-        config
-            .yt_dlp_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        config
-            .ffmpeg_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        optional(config.yt_dlp_path.as_ref()),
+        optional(config.ffmpeg_path.as_ref()),
     ]
 }
 
@@ -1581,17 +1587,16 @@ fn optional_path(value: &str) -> Option<PathBuf> {
 }
 
 fn expand_user_path(value: &str) -> PathBuf {
-    if value == "~" {
-        return directories::UserDirs::new()
-            .map(|directories| directories.home_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(value));
-    }
-    if let Some(relative) = value.strip_prefix("~/") {
-        return directories::UserDirs::new()
-            .map(|directories| directories.home_dir().join(relative))
-            .unwrap_or_else(|| PathBuf::from(value));
-    }
-    PathBuf::from(value)
+    let relative = match value {
+        "~" => Some(""),
+        _ => value.strip_prefix("~/"),
+    };
+    let Some(relative) = relative else {
+        return PathBuf::from(value);
+    };
+    crate::domain::home_directory()
+        .map(|home| home.join(relative))
+        .unwrap_or_else(|| PathBuf::from(value))
 }
 
 /// yt-dlp reports the finished file over its own stdout, so the path is only
@@ -1623,11 +1628,7 @@ fn cycle(current: usize, count: usize, delta: isize) -> usize {
     if count == 0 {
         return 0;
     }
-    if delta >= 0 {
-        (current + delta as usize) % count
-    } else {
-        (current + count - (delta.unsigned_abs() % count)) % count
-    }
+    (current as isize + delta).rem_euclid(count as isize) as usize
 }
 
 fn push_log(logs: &mut HashMap<String, VecDeque<String>>, job_id: &str, line: String) {
@@ -1668,24 +1669,12 @@ fn error_guidance(kind: YtDlpErrorKind) -> &'static str {
     }
 }
 
-fn quality_label(quality: Quality) -> &'static str {
-    match quality {
-        Quality::Best => "Best available",
-        Quality::P2160 => "4K",
-        Quality::P1080 => "1080p",
-        Quality::P720 => "720p",
-        Quality::P480 => "480p",
-    }
-}
-
 fn mode_label(mode: &DownloadMode) -> Cow<'_, str> {
     match mode {
-        DownloadMode::Video { quality } => {
-            Cow::Owned(format!("Video / MP4 / {}", quality_label(*quality)))
-        }
+        DownloadMode::Video { quality } => Cow::Owned(format!("Video / MP4 / {}", quality.label())),
         DownloadMode::Audio => Cow::Borrowed("Audio / M4A"),
         DownloadMode::Subtitles { language, format } => {
-            Cow::Owned(format!("Subtitles / {language} / {format:?}"))
+            Cow::Owned(format!("Subtitles / {language} / {}", format.label()))
         }
     }
 }
@@ -1749,18 +1738,18 @@ fn unix_time() -> i64 {
         .as_secs() as i64
 }
 
+/// Each `replace` allocates, so only the needles actually present are applied.
+fn redact(message: &mut String, needle: &str, replacement: &str) {
+    if !needle.is_empty() && message.contains(needle) {
+        *message = message.replace(needle, replacement);
+    }
+}
+
 fn sanitize_auth_details(
     mut message: String,
     authentication: &Authentication,
     cookie_jar: Option<&Path>,
 ) -> String {
-    // Each `replace` allocates, so only the needles actually present are applied.
-    fn redact(message: &mut String, needle: &str, replacement: &str) {
-        if !needle.is_empty() && message.contains(needle) {
-            *message = message.replace(needle, replacement);
-        }
-    }
-
     if let Some(source) = authentication.browser_cookie_source() {
         redact(&mut message, &source, "<browser-profile>");
     }
@@ -1769,12 +1758,7 @@ fn sanitize_auth_details(
             redact(&mut message, profile, "<profile>");
         }
         redact(&mut message, browser.as_yt_dlp_name(), "<browser>");
-        let display_name = match browser {
-            Browser::Chrome => "Chrome",
-            Browser::Firefox => "Firefox",
-            Browser::Brave => "Brave",
-        };
-        redact(&mut message, display_name, "<browser>");
+        redact(&mut message, browser.display_name(), "<browser>");
     }
     if let Some(cookie_jar) = cookie_jar {
         redact(&mut message, &cookie_jar.to_string_lossy(), "<cookie-jar>");
@@ -1782,13 +1766,8 @@ fn sanitize_auth_details(
     message
 }
 
-fn home_directory() -> Option<String> {
-    directories::UserDirs::new()
-        .map(|directories| directories.home_dir().to_string_lossy().into_owned())
-}
-
-fn relative_time(timestamp: i64) -> String {
-    let age = unix_time().saturating_sub(timestamp);
+fn relative_time(now: i64, timestamp: i64) -> String {
+    let age = now.saturating_sub(timestamp);
     match age {
         0..=59 => "just now".into(),
         60..=3599 => format!("{}m ago", age / 60),
@@ -1800,6 +1779,32 @@ fn relative_time(timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Replaces the app's runtime with a stub and hands back the command end,
+    /// so a test can assert on what the app tried to run.
+    fn stub_runtime(app: &mut App) -> mpsc::UnboundedReceiver<RuntimeCommand> {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = mpsc::unbounded_channel();
+        app.runtime = RuntimeHandle {
+            commands: command_tx,
+            events: event_rx,
+        };
+        command_rx
+    }
+
+    fn sample_metadata(
+        duration_seconds: Option<u64>,
+        available_qualities: Vec<Quality>,
+    ) -> MediaMetadata {
+        MediaMetadata {
+            id: "id".into(),
+            title: "Title".into(),
+            duration_seconds,
+            thumbnail_url: None,
+            subtitles: Vec::new(),
+            available_qualities,
+        }
+    }
 
     #[test]
     #[cfg(unix)]
@@ -1846,14 +1851,7 @@ mod tests {
             },
         );
         app.add.probe_request_id = Some(8);
-        let metadata = MediaMetadata {
-            id: "id".into(),
-            title: "Title".into(),
-            duration_seconds: None,
-            thumbnail_url: None,
-            subtitles: Vec::new(),
-            available_qualities: vec![Quality::Best],
-        };
+        let metadata = sample_metadata(None, vec![Quality::Best]);
 
         app.handle_runtime_event(RuntimeEvent::ProbeFinished {
             request_id: 7,
@@ -1884,12 +1882,7 @@ mod tests {
     #[tokio::test]
     async fn bare_q_starts_quit_flow_but_ctrl_q_does_not() {
         let mut app = App::new().unwrap();
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        app.runtime = RuntimeHandle {
-            commands: command_tx,
-            events: event_rx,
-        };
+        let mut command_rx = stub_runtime(&mut app);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
         assert!(!app.shutting_down);
@@ -1906,12 +1899,7 @@ mod tests {
     #[tokio::test]
     async fn active_download_requires_a_second_bare_q_to_quit() {
         let mut app = App::new().unwrap();
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        app.runtime = RuntimeHandle {
-            commands: command_tx,
-            events: event_rx,
-        };
+        let mut command_rx = stub_runtime(&mut app);
         app.jobs.push(DownloadJob {
             id: "job-1".into(),
             url: "https://example.test/video".into(),
@@ -2004,12 +1992,7 @@ mod tests {
             name: "Profile 1".into(),
         }];
         app.add.output = directory.path().to_string_lossy().into_owned();
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        app.runtime = RuntimeHandle {
-            commands: command_tx,
-            events: event_rx,
-        };
+        let mut command_rx = stub_runtime(&mut app);
 
         app.start_probe();
         let (request_id, probe) = match command_rx.try_recv().unwrap() {
@@ -2026,14 +2009,7 @@ mod tests {
         );
         app.handle_runtime_event(RuntimeEvent::ProbeFinished {
             request_id,
-            result: Ok(MediaMetadata {
-                id: "id".into(),
-                title: "Title".into(),
-                duration_seconds: None,
-                thumbnail_url: None,
-                subtitles: Vec::new(),
-                available_qualities: vec![Quality::Best],
-            }),
+            result: Ok(sample_metadata(None, vec![Quality::Best])),
         });
 
         app.screen = Screen::Review;
@@ -2281,14 +2257,7 @@ mod tests {
         app.history_store = HistoryStore::new(directory.path().join("history.json"));
         assert_eq!(app.screen, Screen::Source);
 
-        let metadata = MediaMetadata {
-            id: "id".into(),
-            title: "Title".into(),
-            duration_seconds: Some(60),
-            thumbnail_url: None,
-            subtitles: Vec::new(),
-            available_qualities: vec![Quality::Best, Quality::P1080],
-        };
+        let metadata = sample_metadata(Some(60), vec![Quality::Best, Quality::P1080]);
         app.add.probe_request_id = Some(7);
         app.screen = Screen::Probe;
         app.handle_runtime_event(RuntimeEvent::ProbeFinished {
@@ -2300,12 +2269,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.screen, Screen::Review);
 
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        app.runtime = RuntimeHandle {
-            commands: command_tx,
-            events: event_rx,
-        };
+        let mut command_rx = stub_runtime(&mut app);
         app.dependencies.paths.ffmpeg = Some(PathBuf::from("ffmpeg"));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.screen, Screen::Progress);
@@ -2363,14 +2327,7 @@ mod tests {
     fn four_k_label_is_only_available_from_probe_data() {
         let mut form = AddForm::new(Path::new("downloads"));
         assert!(!form.qualities().contains(&Quality::P2160));
-        form.metadata = Some(MediaMetadata {
-            id: "id".into(),
-            title: "Title".into(),
-            duration_seconds: None,
-            thumbnail_url: None,
-            subtitles: Vec::new(),
-            available_qualities: vec![Quality::Best, Quality::P2160],
-        });
+        form.metadata = Some(sample_metadata(None, vec![Quality::Best, Quality::P2160]));
         assert!(form.qualities().contains(&Quality::P2160));
     }
 

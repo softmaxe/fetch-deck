@@ -39,10 +39,9 @@ impl ConfigStore {
     }
 
     pub fn load(&self) -> Result<AppConfig, StorageError> {
-        match fs::read_to_string(&self.path) {
-            Ok(contents) => Ok(toml::from_str(&contents)?),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AppConfig::default()),
-            Err(error) => Err(error.into()),
+        match read_optional(&self.path)? {
+            Some(contents) => Ok(toml::from_slice(&contents)?),
+            None => Ok(AppConfig::default()),
         }
     }
 
@@ -88,14 +87,22 @@ fn project_dirs() -> Result<ProjectDirs, StorageError> {
         .ok_or(StorageError::ProjectDirectoriesUnavailable)
 }
 
+/// A missing file is an empty store, not an error; both loaders read that way.
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, StorageError> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn load_json_or_default<T>(path: &Path) -> Result<T, StorageError>
 where
     T: DeserializeOwned + Default,
 {
-    match fs::read(path) {
-        Ok(contents) => Ok(serde_json::from_slice(&contents)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(T::default()),
-        Err(error) => Err(error.into()),
+    match read_optional(path)? {
+        Some(contents) => Ok(serde_json::from_slice(&contents)?),
+        None => Ok(T::default()),
     }
 }
 

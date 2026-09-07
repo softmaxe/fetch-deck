@@ -16,6 +16,8 @@ use crate::{
 };
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
+/// Stderr kept for the failure message; the buffer is preallocated to match.
+const STDERR_TAIL_LINES: usize = 80;
 
 #[derive(Debug)]
 pub enum RuntimeCommand {
@@ -230,7 +232,7 @@ async fn run_download(
         spawn_line_reader(stderr, true, line_tx);
     }
 
-    let mut stderr_tail = VecDeque::with_capacity(80);
+    let mut stderr_tail = VecDeque::with_capacity(STDERR_TAIL_LINES);
     let mut wait = Box::pin(child.wait());
     let outcome = loop {
         tokio::select! {
@@ -312,7 +314,7 @@ fn handle_child_line(
         });
     } else {
         if is_stderr {
-            if stderr_tail.len() == 80 {
+            if stderr_tail.len() == STDERR_TAIL_LINES {
                 stderr_tail.pop_front();
             }
             stderr_tail.push_back(line.clone());

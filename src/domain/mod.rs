@@ -11,11 +11,23 @@ pub enum Browser {
 }
 
 impl Browser {
+    /// Selection order for the cookie source cycler and the only place that
+    /// decides which browsers exist.
+    pub const ALL: [Self; 3] = [Self::Chrome, Self::Firefox, Self::Brave];
+
     pub fn as_yt_dlp_name(&self) -> &'static str {
         match self {
             Self::Chrome => "chrome",
             Self::Firefox => "firefox",
             Self::Brave => "brave",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Chrome => "Chrome",
+            Self::Firefox => "Firefox",
+            Self::Brave => "Brave",
         }
     }
 }
@@ -60,6 +72,16 @@ pub enum Quality {
 }
 
 impl Quality {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Best => "Best available",
+            Self::P2160 => "4K",
+            Self::P1080 => "1080p",
+            Self::P720 => "720p",
+            Self::P480 => "480p",
+        }
+    }
+
     pub fn height(self) -> Option<u32> {
         match self {
             Self::Best => None,
@@ -84,6 +106,13 @@ impl SubtitleFormat {
         match self {
             Self::Srt => "srt",
             Self::Vtt => "vtt",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Srt => "SRT",
+            Self::Vtt => "VTT",
         }
     }
 }
@@ -201,6 +230,12 @@ pub struct AppConfig {
     pub yt_dlp_path: Option<PathBuf>,
     pub ffmpeg_path: Option<PathBuf>,
     pub cookie_notice_acknowledged: bool,
+}
+
+/// Single lookup point for the user's home directory; `directories::UserDirs`
+/// re-resolves it on every construction.
+pub fn home_directory() -> Option<PathBuf> {
+    directories::UserDirs::new().map(|directories| directories.home_dir().to_path_buf())
 }
 
 impl Default for AppConfig {
