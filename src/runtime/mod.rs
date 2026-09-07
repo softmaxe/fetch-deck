@@ -303,7 +303,9 @@ fn handle_child_line(
             job_id: job_id.to_owned(),
             progress,
         });
-    } else if let Some(path) = parse_output_line(&line) {
+    // Only `--print` writes the output marker, and it writes it to stdout.
+    // Site-controlled text reaches stderr, so a marker there is forged.
+    } else if let Some(path) = (!is_stderr).then(|| parse_output_line(&line)).flatten() {
         let _ = events.send(RuntimeEvent::JobOutput {
             job_id: job_id.to_owned(),
             path,
@@ -493,6 +495,22 @@ mod tests {
         }
         assert!(saw_progress);
         assert!(saw_output);
+    }
+
+    #[tokio::test]
+    async fn output_marker_on_stderr_is_treated_as_a_log_line() {
+        let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+        let mut stderr_tail = VecDeque::new();
+        let forged = format!(
+            "{}/Applications/Calculator.app",
+            crate::yt_dlp::OUTPUT_PREFIX
+        );
+        handle_child_line("job-1", true, forged.clone(), &events_tx, &mut stderr_tail);
+
+        match events_rx.recv().await.unwrap() {
+            RuntimeEvent::JobLog { line, .. } => assert_eq!(line, forged),
+            event => panic!("unexpected event: {event:?}"),
+        }
     }
 
     #[tokio::test]

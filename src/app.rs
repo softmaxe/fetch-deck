@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fs::OpenOptions,
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -1184,7 +1184,15 @@ impl App {
             }
             RuntimeEvent::JobOutput { job_id, path } => {
                 if let Some(job) = self.job_mut(&job_id) {
-                    job.output_path = Some(path);
+                    if is_inside_output_directory(&path, &job.output_directory) {
+                        job.output_path = Some(path);
+                    } else {
+                        push_log(
+                            &mut self.logs,
+                            &job_id,
+                            "Ignored an output path outside the output directory".into(),
+                        );
+                    }
                 }
             }
             RuntimeEvent::JobFinished { job_id } => {
@@ -1584,6 +1592,16 @@ fn expand_user_path(value: &str) -> PathBuf {
             .unwrap_or_else(|| PathBuf::from(value));
     }
     PathBuf::from(value)
+}
+
+/// yt-dlp reports the finished file over its own stdout, so the path is only
+/// trusted where the download was asked to write it. Anything else is a forged
+/// or escaped path and must not reach history or `open`.
+fn is_inside_output_directory(path: &Path, output_directory: &Path) -> bool {
+    !path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+        && path.starts_with(output_directory)
 }
 
 fn validate_video_url(value: &str) -> Result<(), String> {
@@ -2360,5 +2378,25 @@ mod tests {
     fn byte_and_duration_formatters_are_stable() {
         assert_eq!(format_bytes(Some(1_048_576)), "1.0 MiB");
         assert_eq!(format_duration(65), "01:05");
+    }
+
+    #[test]
+    fn output_paths_outside_the_output_directory_are_rejected() {
+        let output_directory = Path::new("/Users/example/Downloads");
+        assert!(is_inside_output_directory(
+            Path::new("/Users/example/Downloads/Clip [abc].mp4"),
+            output_directory,
+        ));
+        for forged in [
+            "/Applications/Calculator.app",
+            "x-scheme://payload",
+            "-a/Applications/Calculator.app",
+            "/Users/example/Downloads/../../../etc/passwd",
+        ] {
+            assert!(
+                !is_inside_output_directory(Path::new(forged), output_directory),
+                "accepted {forged}"
+            );
+        }
     }
 }

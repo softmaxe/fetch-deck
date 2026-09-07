@@ -53,10 +53,20 @@ fn profile_rank(profile: &str) -> (u8, &str) {
 }
 
 pub fn open_in_finder(path: &Path) -> std::io::Result<()> {
-    let target = if path.is_file() {
-        path.parent().unwrap_or(path)
+    // `open` has no `--` separator: a leading `-` is read as an option and a
+    // scheme-like argument is opened as a URL. Resolving the path first keeps
+    // both out of the argument, and rejects anything that is not on disk.
+    let resolved = fs::canonicalize(path)?;
+    if !resolved.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "output path is not absolute",
+        ));
+    }
+    let target = if resolved.is_file() {
+        resolved.parent().unwrap_or(&resolved)
     } else {
-        path
+        resolved.as_path()
     };
     std::process::Command::new("open").arg(target).spawn()?;
     Ok(())
@@ -84,5 +94,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Default", "Profile 2"]
         );
+    }
+
+    #[test]
+    fn finder_refuses_paths_that_are_not_on_disk() {
+        for forged in ["x-scheme://payload", "-a/Applications/Calculator.app"] {
+            assert!(
+                open_in_finder(Path::new(forged)).is_err(),
+                "opened {forged}"
+            );
+        }
     }
 }
