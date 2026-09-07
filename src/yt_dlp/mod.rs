@@ -202,27 +202,30 @@ pub fn parse_probe_json(input: &str) -> Result<MediaMetadata, ProbeParseError> {
     }
     let id = string_field(&value, "id")?;
     let title = string_field(&value, "title")?;
-    let heights: Vec<u64> = value
+    let mut detected_qualities = [false; 4];
+    for height in value
         .get("formats")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|format| format.get("height").and_then(Value::as_u64))
-        .collect();
-    let mut available_qualities = vec![Quality::Best];
-    for (quality, minimum, maximum) in [
-        (Quality::P2160, 2160, u64::MAX),
-        (Quality::P1080, 1080, 2159),
-        (Quality::P720, 720, 1079),
-        (Quality::P480, 480, 719),
-    ] {
-        if heights
-            .iter()
-            .any(|height| (*height >= minimum) && (*height <= maximum))
-        {
-            available_qualities.push(quality);
-        }
+    {
+        let index = match height {
+            2160.. => 0,
+            1080..=2159 => 1,
+            720..=1079 => 2,
+            480..=719 => 3,
+            _ => continue,
+        };
+        detected_qualities[index] = true;
     }
+    let mut available_qualities = vec![Quality::Best];
+    available_qualities.extend(
+        [Quality::P2160, Quality::P1080, Quality::P720, Quality::P480]
+            .into_iter()
+            .zip(detected_qualities)
+            .filter_map(|(quality, detected)| detected.then_some(quality)),
+    );
     Ok(MediaMetadata {
         id,
         title,
@@ -490,6 +493,57 @@ mod tests {
         )
         .unwrap();
         assert!(metadata.available_qualities.contains(&Quality::P2160));
+    }
+
+    #[test]
+    fn probe_preserves_quality_boundaries_and_order() {
+        for (height, quality) in [
+            (479, None),
+            (480, Some(Quality::P480)),
+            (719, Some(Quality::P480)),
+            (720, Some(Quality::P720)),
+            (1079, Some(Quality::P720)),
+            (1080, Some(Quality::P1080)),
+            (2159, Some(Quality::P1080)),
+            (2160, Some(Quality::P2160)),
+            (u64::MAX, Some(Quality::P2160)),
+        ] {
+            let input = serde_json::json!({
+                "id": "abc", "title": "Title", "formats": [{"height": height}]
+            });
+            let metadata = parse_probe_json(&input.to_string()).unwrap();
+            let mut expected = vec![Quality::Best];
+            expected.extend(quality);
+            assert_eq!(metadata.available_qualities, expected, "height {height}");
+        }
+
+        for formats in [
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!([{}, {"height": null}, {"height": -1}, {"height": "1080"}]),
+        ] {
+            let input = serde_json::json!({"id": "abc", "title": "Title", "formats": formats});
+            assert_eq!(
+                parse_probe_json(&input.to_string())
+                    .unwrap()
+                    .available_qualities,
+                vec![Quality::Best]
+            );
+        }
+
+        let metadata = parse_probe_json(
+            r#"{"id":"abc","title":"Title","formats":[{"height":480},{"height":2160},{"height":720},{"height":1080},{"height":2160}]}"#,
+        ).unwrap();
+        assert_eq!(
+            metadata.available_qualities,
+            vec![
+                Quality::Best,
+                Quality::P2160,
+                Quality::P1080,
+                Quality::P720,
+                Quality::P480
+            ]
+        );
     }
 
     #[test]
