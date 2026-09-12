@@ -4,12 +4,12 @@
 
 <h1 align="center">FetchDeck</h1>
 
-<p align="center">Download video, audio, and subtitles with <code>yt-dlp</code> from a macOS terminal UI.</p>
-
 <p align="center">
   <a href="README.md"><kbd>English</kbd></a>
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
+
+<p align="center">Download video, audio, and subtitles with <code>yt-dlp</code> from a macOS terminal UI.</p>
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="960" alt="FetchDeck workflow demo">
@@ -45,7 +45,7 @@ The formula installs `yt-dlp` and `ffmpeg` as dependencies.
 
 FetchDeck can also:
 
-- Read cookies from local Chrome, Firefox, or Brave profiles after asking for confirmation.
+- Read cookies from local Chrome, Firefox, or Brave profiles after a one-time confirmation.
 - Show progress, speed, ETA, status, and recent `yt-dlp` output.
 - Cancel and retry downloads while keeping partial files available to `yt-dlp`.
 - Download fragmented sources in parallel and prefer formats that merge without re-encoding.
@@ -100,7 +100,7 @@ Mouse input works too. Click fields and options, or use the wheel to scroll Revi
 
 ## Cookies, privacy, and local data
 
-FetchDeck asks before reading browser cookies. On the first successful probe, the local `yt-dlp` executable exports the selected profile's cookies to a private temporary file. FetchDeck reuses that file for the current session and deletes it on exit.
+FetchDeck asks once before its first attempt to read browser cookies. On the first successful probe for a browser profile, the local `yt-dlp` executable exports its cookies to a private temporary file. FetchDeck reuses that file for the current session and deletes it on exit.
 
 Logs and errors hide the cookie file path and browser authentication details. Settings and history never store the selected browser, profile, cookie file, or generated command. FetchDeck sends no telemetry.
 
@@ -131,4 +131,4 @@ The tape uses JetBrains Mono 16 and Catppuccin Mocha. VHS renders an opaque back
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[AGPL-3.0-only](LICENSE)

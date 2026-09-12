@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="176" alt="FetchDeck Logo">
+  <img src="docs/assets/logo.png" width="176" alt="FetchDeck 标志">
 </p>
 
 <h1 align="center">FetchDeck</h1>
-
-<p align="center">在 macOS 终端界面中使用 <code>yt-dlp</code> 下载视频、音频和字幕。</p>
 
 <p align="center">
   <a href="README.md"><kbd>English</kbd></a>
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
+
+<p align="center">在 macOS 终端界面中使用 <code>yt-dlp</code> 下载视频、音频和字幕。</p>
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="960" alt="FetchDeck 下载流程演示">
@@ -45,7 +45,7 @@ fetchdeck
 
 FetchDeck 还可以：
 
-- 经确认后读取本机 Chrome、Firefox 或 Brave 配置中的 cookie。
+- 首次使用前经一次确认，读取本机 Chrome、Firefox 或 Brave 配置中的 cookie。
 - 显示进度、速度、预计剩余时间、状态和最近的 `yt-dlp` 输出。
 - 取消和重试下载，并保留分段文件供 `yt-dlp` 继续使用。
 - 并行下载分片资源，并优先选择无需转码即可合并的格式。
@@ -100,7 +100,7 @@ FetchDeck 会在界面顶部显示依赖版本；后台读取期间显示 `check
 
 ## Cookie、隐私和本地数据
 
-FetchDeck 会先征得同意，再读取浏览器 cookie。第一次成功读取时，本机的 `yt-dlp` 会将所选配置中的 cookie 导出到私有临时文件。FetchDeck 在当前会话中复用该文件，并在退出时删除。
+FetchDeck 会在首次尝试读取浏览器 cookie 前确认一次。成功读取某个浏览器配置后，本机的 `yt-dlp` 会将其中的 cookie 导出到私有临时文件。FetchDeck 在当前会话中复用该文件，并在退出时删除。
 
 日志和错误信息会隐藏 cookie 文件路径及浏览器认证详情。设置和历史记录不会保存所选浏览器、配置、cookie 文件或生成的命令。FetchDeck 不发送遥测数据。
 
@@ -131,4 +131,4 @@ Tape 使用 JetBrains Mono 16 和 Catppuccin Mocha。VHS 使用不透明背景�
 
 ## 许可证
 
-[AGPL-3.0](LICENSE)
+[AGPL-3.0-only](LICENSE)
